@@ -1,0 +1,73 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew --no-daemon test
+
+      - name: Decode keystore
+        # Optional: without the secrets the release APK is signed with the debug
+        # key, which is still installable — it just cannot upgrade a previous
+        # release-signed install.
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.FINREADER_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/finreader.jks"
+            echo "path=$RUNNER_TEMP/finreader.jks" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No signing keystore configured - falling back to the debug key."
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release APK
+        env:
+          FINREADER_KEYSTORE: ${{ steps.keystore.outputs.path }}
+          FINREADER_KEYSTORE_PASSWORD: ${{ secrets.FINREADER_KEYSTORE_PASSWORD }}
+          FINREADER_KEY_ALIAS: ${{ secrets.FINREADER_KEY_ALIAS }}
+          FINREADER_KEY_PASSWORD: ${{ secrets.FINREADER_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Name the artifact after the build
+        id: apk
+        run: |
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          SRC=app/build/outputs/apk/release/app-release.apk
+          DEST="finreader-${VERSION}-${GITHUB_SHA::7}.apk"
+          cp "$SRC" "$DEST"
+          echo "name=$DEST" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finreader-apk
+          path: ${{ steps.apk.outputs.name }}
+          retention-days: 90
+
+      - name: Attach the APK to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.apk.outputs.name }}

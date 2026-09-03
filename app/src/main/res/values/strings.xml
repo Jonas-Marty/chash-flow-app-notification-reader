@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">FinReader</string>
+    <string name="channel_feedback_name">Captured transactions</string>
+    <string name="channel_feedback_desc">Shown when a payment notification was captured and queued.</string>
+    <string name="channel_problem_name">Problems</string>
+    <string name="channel_problem_desc">Shown when a transaction could not be sent to the web app.</string>
+</resources>
