@@ -14,6 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="finreader-android:latest"
 VOLUME="finreader-gradle"
+ANDROID_VOLUME="finreader-android-home"   # keeps the debug signing key stable
 
 docker build \
     --build-arg "USER_UID=$(id -u)" \
@@ -21,7 +22,9 @@ docker build \
     -t "$IMAGE" \
     "$ROOT/.devcontainer"
 
-docker volume inspect "$VOLUME" >/dev/null 2>&1 || docker volume create "$VOLUME" >/dev/null
+for vol in "$VOLUME" "$ANDROID_VOLUME"; do
+    docker volume inspect "$vol" >/dev/null 2>&1 || docker volume create "$vol" >/dev/null
+done
 
 args=("$@")
 [ ${#args[@]} -eq 0 ] && args=(assembleDebug)
@@ -30,12 +33,24 @@ run_args=(
     --rm -i
     -v "$ROOT:/workspace"
     -v "$VOLUME:/home/dev/.gradle"
+    -v "$ANDROID_VOLUME:/home/dev/.android"
     -w /workspace
 )
 [ -t 0 ] && run_args+=(-t)
 
-# Pass the signing config through, mounting the keystore read-only if present.
-if [ -n "${FINREADER_KEYSTORE:-}" ] && [ -f "${FINREADER_KEYSTORE}" ]; then
+# A local keystore.properties wins: mount its keystore at the very same absolute
+# path inside the container so the path in the properties file just works.
+if [ -f "$ROOT/keystore.properties" ]; then
+    store="$(sed -n 's/^storeFile=//p' "$ROOT/keystore.properties" | head -1)"
+    if [ -n "$store" ] && [ -f "$store" ]; then
+        run_args+=(-v "$(dirname "$store"):$(dirname "$store"):ro")
+    else
+        echo "warning: keystore.properties points at a missing storeFile: $store" >&2
+    fi
+fi
+
+# Otherwise CI-style env vars, with the keystore mounted read-only.
+if [ ! -f "$ROOT/keystore.properties" ] && [ -n "${FINREADER_KEYSTORE:-}" ] && [ -f "${FINREADER_KEYSTORE}" ]; then
     run_args+=(-v "${FINREADER_KEYSTORE}:/keystore.jks:ro" -e "FINREADER_KEYSTORE=/keystore.jks")
     for var in FINREADER_KEYSTORE_PASSWORD FINREADER_KEY_ALIAS FINREADER_KEY_PASSWORD; do
         run_args+=(-e "$var=${!var:-}")

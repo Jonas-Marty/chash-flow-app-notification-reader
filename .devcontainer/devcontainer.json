@@ -9,7 +9,8 @@
   },
   "workspaceFolder": "/workspace",
   "mounts": [
-    "source=finreader-gradle,target=/home/dev/.gradle,type=volume"
+    "source=finreader-gradle,target=/home/dev/.gradle,type=volume",
+    "source=finreader-android-home,target=/home/dev/.android,type=volume"
   ],
   "remoteEnv": {
     "ANDROID_HOME": "/opt/android-sdk",

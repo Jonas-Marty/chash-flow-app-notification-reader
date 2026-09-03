@@ -46,7 +46,7 @@ RUN if getent group "${USER_GID}" >/dev/null; then \
     else \
         useradd -m -u "${USER_UID}" -g "${USER_GID}" -s /bin/bash dev; \
     fi \
-    && mkdir -p /home/dev/.gradle \
+    && mkdir -p /home/dev/.gradle /home/dev/.android \
     && chown -R "${USER_UID}:${USER_GID}" /home/dev "${ANDROID_HOME}"
 
 USER dev
