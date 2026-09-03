@@ -67,7 +67,14 @@ data class PendingTransactionDto(
     val id: String,
     val amount: Double? = null,
     val description: String? = null,
+    /** "pending", "confirmed" or "rejected". */
     val status: String? = null,
+    @SerialName("external_source") val externalSource: String? = null,
+    @SerialName("external_ref") val externalRef: String? = null,
+    @SerialName("confirmed_transaction_id") val confirmedTransactionId: String? = null,
+    @SerialName("confirmed_at") val confirmedAt: String? = null,
+    @SerialName("rejected_at") val rejectedAt: String? = null,
+    @SerialName("reject_reason") val rejectReason: String? = null,
 )
 
 @Serializable

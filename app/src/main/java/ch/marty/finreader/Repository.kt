@@ -10,7 +10,11 @@ import ch.marty.finreader.data.db.AccountCache
 import ch.marty.finreader.data.db.AppDatabase
 import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.CategoryCache
+import ch.marty.finreader.data.api.PendingTransactionDto
+import ch.marty.finreader.data.api.PendingTransactionPayload
 import ch.marty.finreader.data.db.MatchState
+import ch.marty.finreader.data.db.OutboxItem
+import ch.marty.finreader.data.db.ServerStatus
 import ch.marty.finreader.data.db.MonitoredApp
 import ch.marty.finreader.data.db.OutboxState
 import ch.marty.finreader.data.db.Rule
@@ -27,6 +31,14 @@ data class InstalledApp(
     val label: String,
     val monitored: Boolean,
 )
+
+/** Outcome of [Repository.rerun], phrased for the inbox message. */
+sealed interface RerunResult {
+    /** The rules ran; [state] is what the capture ended up as, null if it vanished. */
+    data class Done(val state: MatchState?) : RerunResult
+
+    data class Refused(val reason: String) : RerunResult
+}
 
 @Serializable
 data class RuleExport(
@@ -102,8 +114,122 @@ class Repository(
 
     suspend fun deleteCapture(id: Long) = db.captured().delete(id)
 
-    /** Re-runs the current rules against a capture stored earlier. */
-    suspend fun rematch(capturedId: Long): MatchState? = captureProcessor.rematch(capturedId)
+    /**
+     * Withdraws whatever a capture produced last time and runs the rules
+     * afresh: the pending transaction is deleted in the web app, the outbox
+     * item locally, and the capture goes back through the rule engine. A
+     * transaction the user has already accepted is left untouched.
+     */
+    suspend fun rerun(capturedId: Long): RerunResult {
+        val capture = db.captured().byId(capturedId)
+            ?: return RerunResult.Refused("That notification is no longer stored")
+        val item = capture.outboxId?.let { db.outbox().byId(it) }
+            ?: return RerunResult.Done(captureProcessor.reevaluate(capturedId))
+
+        if (item.state == OutboxState.SENDING) {
+            return RerunResult.Refused("It is being sent right now — try again in a moment")
+        }
+        if (item.serverStatus == ServerStatus.CONFIRMED) {
+            return RerunResult.Refused(ALREADY_ACCEPTED)
+        }
+
+        // Anything that reached the server holds the (source, ref) pair the
+        // next post would collide with, so it has to go first.
+        val reachedServer = item.remotePendingId != null ||
+            item.state == OutboxState.POSTED ||
+            item.state == OutboxState.DEDUPED
+        if (reachedServer) {
+            val source = runCatching {
+                json.decodeFromString<PendingTransactionPayload>(item.payloadJson).externalSource
+            }.getOrNull()
+            when (val deleted = api.deletePending(item.remotePendingId, source, item.externalRef)) {
+                is ApiResult.Ok -> Unit
+
+                is ApiResult.ClientError -> {
+                    // Accepted in the web app between the last status check and now.
+                    if (deleted.code == 409) {
+                        db.outbox().updateServerStatus(
+                            id = item.id,
+                            status = ServerStatus.CONFIRMED,
+                            transactionId = item.confirmedTransactionId,
+                            rejectReason = item.rejectReason,
+                            remoteId = null,
+                        )
+                        return RerunResult.Refused(ALREADY_ACCEPTED)
+                    }
+                    return RerunResult.Refused("Could not remove it in cash-flow: ${deleted.message}")
+                }
+
+                is ApiResult.ServerError ->
+                    return RerunResult.Refused("Could not remove it in cash-flow: ${deleted.message}")
+
+                is ApiResult.NetworkError ->
+                    return RerunResult.Refused("No connection: ${deleted.message}")
+            }
+        }
+
+        // Unlink before deleting so the capture never points at a missing row.
+        db.captured().updateOutcome(capturedId, MatchState.UNMATCHED, null, null, null)
+        db.outbox().deleteById(item.id)
+        return RerunResult.Done(captureProcessor.reevaluate(capturedId))
+    }
+
+    /**
+     * Asks the web app what happened to everything we posted: still on
+     * `/pending`, accepted, rejected, or deleted there. Returns how many items
+     * were checked.
+     */
+    suspend fun refreshServerStatus(): ApiResult<Int> {
+        val posted = db.outbox().postedItems()
+        if (posted.isEmpty()) return ApiResult.Ok(0)
+
+        return when (val remote = api.fetchPendingByRefs(posted.map { it.externalRef })) {
+            is ApiResult.Ok -> {
+                val byRef = remote.value.rows.associateBy { it.externalRef }
+                var checked = 0
+                posted.forEach { item ->
+                    val row = byRef[item.externalRef]
+                    // A missing row only means "deleted" when the server proved
+                    // it looked for that specific ref. Otherwise leave the last
+                    // known status alone rather than inventing GONE.
+                    if (row == null && !remote.value.filtered) return@forEach
+                    db.outbox().updateServerStatus(
+                        id = item.id,
+                        status = serverStatusOf(row),
+                        transactionId = row?.confirmedTransactionId,
+                        rejectReason = row?.rejectReason,
+                        remoteId = row?.id,
+                    )
+                    checked++
+                }
+                ApiResult.Ok(checked)
+            }
+
+            is ApiResult.ClientError -> remote
+            is ApiResult.ServerError -> remote
+            is ApiResult.NetworkError -> remote
+        }
+    }
+
+    private fun serverStatusOf(row: PendingTransactionDto?): ServerStatus? = when (row?.status) {
+        "pending" -> ServerStatus.PENDING
+        "confirmed" -> ServerStatus.CONFIRMED
+        "rejected" -> ServerStatus.REJECTED
+        null -> ServerStatus.GONE
+        else -> null
+    }
+
+    /** Deep link into the web app for a posted item. */
+    fun webLinkFor(item: OutboxItem): String? {
+        val base = settings.current().baseUrl.trimEnd('/').takeIf { it.isNotBlank() } ?: return null
+        return when (item.serverStatus) {
+            ServerStatus.CONFIRMED ->
+                item.confirmedTransactionId?.let { "$base/edit/$it" } ?: "$base/pending"
+
+            ServerStatus.REJECTED -> "$base/pending"
+            else -> "$base/pending"
+        }
+    }
 
     /** Re-queues a failed or held item. */
     suspend fun sendNow(outboxId: Long) {
@@ -178,5 +304,10 @@ class Repository(
             db.rules().insertAll(parsed.rules)
             parsed.rules.size
         }
+    }
+
+    private companion object {
+        const val ALREADY_ACCEPTED =
+            "Already accepted in cash-flow — undo it there first if you want to re-run the rules"
     }
 }

@@ -157,6 +157,41 @@ interface OutboxDao {
         now: Long = System.currentTimeMillis(),
     )
 
+    /**
+     * Everything that reached the server and could still change there.
+     *
+     * CONFIRMED and GONE are dropped: the web app never un-confirms a
+     * transaction, and a deleted row cannot come back under the same ref.
+     * REJECTED stays in — "restore" puts it back on the pending list.
+     */
+    @Query(
+        """SELECT * FROM outbox_item
+           WHERE state IN ('POSTED', 'DEDUPED')
+             AND (serverStatus IS NULL OR serverStatus NOT IN ('CONFIRMED', 'GONE'))
+           ORDER BY createdAt DESC LIMIT :limit""",
+    )
+    suspend fun postedItems(limit: Int = 200): List<OutboxItem>
+
+    @Query(
+        """UPDATE outbox_item
+           SET serverStatus = :status, confirmedTransactionId = :transactionId,
+               rejectReason = :rejectReason, remotePendingId = COALESCE(:remoteId, remotePendingId),
+               statusCheckedAt = :now, updatedAt = :now
+           WHERE id = :id""",
+    )
+    suspend fun updateServerStatus(
+        id: Long,
+        status: ServerStatus?,
+        transactionId: String?,
+        rejectReason: String?,
+        remoteId: String?,
+        now: Long = System.currentTimeMillis(),
+    )
+
+    /** Used by a re-run, once the row it refers to is gone from the server. */
+    @Query("DELETE FROM outbox_item WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
     /** Recovers items left mid-flight by a killed worker. */
     @Query("UPDATE outbox_item SET state = 'QUEUED' WHERE state = 'SENDING' AND updatedAt < :cutoff")
     suspend fun recoverStaleSending(cutoff: Long): Int

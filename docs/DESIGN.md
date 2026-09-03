@@ -147,17 +147,52 @@ pattern:
   the `/pending` page. This is the "you pointed the rule at the wrong account"
   warning, not a conversion.
 
-### Re-matching a stored capture
+### Re-running the rules on a stored capture
 
 The rules are normally written after the first notification arrives, which
-leaves that first capture marked `UNMATCHED` forever. *Try rules again* in the
-Inbox runs `CaptureProcessor.rematch`, which replays the stored capture through
-the same `evaluate` path as a live notification — same dedupe, same undo window,
-same `occurred_on` (the original `postedAt`, not today).
+leaves that first capture marked `UNMATCHED` forever. *Run rules again* in the
+Inbox replays the stored capture through the same `evaluate` path as a live
+notification — same dedupe, same undo window, same `occurred_on` (the original
+`postedAt`, not today).
 
-It refuses on a capture that already has an outbox item. Re-running one would
-enqueue the payment a second time under a fresh `external_ref` sequence, which
-the server would accept as a genuinely separate transaction.
+A capture that already produced something has to have it withdrawn first,
+otherwise the payment lands twice under different refs. `Repository.rerun`
+does that in order:
+
+1. Refuse if the transaction is already `CONFIRMED` in the web app, or if the
+   outbox item is `SENDING` right now.
+2. If it reached the server, `DELETE /api/public/pending-transactions`
+   (by `remotePendingId`, falling back to the `external_source`/`external_ref`
+   pair). A 404 counts as success; a 409 means the web app accepted it between
+   our last status check and now, so the local status is corrected to
+   `CONFIRMED` and the re-run is refused.
+3. Unlink the capture, delete the outbox row, and re-evaluate.
+
+Deleting the row before re-posting matters twice over: the web app's unique
+index on `(user_id, external_source, external_ref)` would otherwise dedupe the
+new post into the old row, and with the outbox row gone the sequence counter
+resets, so the fresh post reuses the original ref rather than inventing `-1`.
+
+### What the web app did with a transaction
+
+`OutboxItem.serverStatus` mirrors the row in the web app: `PENDING`,
+`CONFIRMED`, `REJECTED`, or `GONE` (posted once, no longer there). It is filled
+in by `Repository.refreshServerStatus`, which the Inbox triggers manually and
+`OutboxWorker` piggy-backs on every periodic run.
+
+Two details keep it honest:
+
+- A ref missing from the response only means `GONE` when the server proved it
+  applied the `external_ref` filter. An older server ignores the unknown
+  parameter and answers with its most recent rows instead, where absence means
+  nothing — hence `PendingLookup.filtered`.
+- `OutboxDao.postedItems` skips `CONFIRMED` and `GONE`. The web app never
+  un-confirms a transaction and a deleted row cannot return under the same ref,
+  so both are terminal. `REJECTED` is *not*: `restorePendingTransaction` puts a
+  rejected row back on the pending list.
+
+Each card links into the web app: `/edit/<confirmed_transaction_id>` once
+accepted, `/pending` otherwise.
 
 ### Placeholder modifiers
 

@@ -66,6 +66,11 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             }
         }
 
+        // Piggy-backs on the periodic run so the accepted/rejected labels in the
+        // inbox stay roughly current without a worker of their own. Costs
+        // nothing when nothing has been posted.
+        container.repository.refreshServerStatus()
+
         // Items still inside their undo window need their own wake-up.
         outbox.nextDueAfter(System.currentTimeMillis())?.let { next ->
             val delay = next - System.currentTimeMillis()

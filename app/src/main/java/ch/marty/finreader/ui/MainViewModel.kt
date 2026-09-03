@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import ch.marty.finreader.AppContainer
 import ch.marty.finreader.InstalledApp
+import ch.marty.finreader.RerunResult
 import ch.marty.finreader.data.api.ApiResult
 import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.MatchState
@@ -147,16 +148,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteCapture(id: Long) = viewModelScope.launch { repo.deleteCapture(id) }
 
-    fun rematch(capturedId: Long) = viewModelScope.launch {
-        _message.value = when (val state = repo.rematch(capturedId)) {
-            MatchState.MATCHED -> "Matched — see the amount on the card"
-            MatchState.UNMATCHED -> "Still no rule matches this notification"
-            MatchState.IGNORED -> "A rule matched but skipped it on purpose"
-            MatchState.ERROR -> "A rule matched but could not build the transaction"
-            MatchState.DUPLICATE -> "Treated as a duplicate of a recent payment"
-            null -> "Already sent — nothing to re-match"
+    /**
+     * Runs the rules again, undoing an earlier post if there was one. Covers
+     * both the never-matched case and the "wrong rule won" case.
+     */
+    fun rerun(capturedId: Long) = viewModelScope.launch {
+        _busy.value = true
+        _message.value = when (val result = repo.rerun(capturedId)) {
+            is RerunResult.Refused -> result.reason
+            is RerunResult.Done -> describe(result.state)
         }
+        _busy.value = false
     }
+
+    private fun describe(state: MatchState?): String = when (state) {
+        MatchState.MATCHED -> "Matched — see the amount on the card"
+        MatchState.UNMATCHED -> "Still no rule matches this notification"
+        MatchState.IGNORED -> "A rule matched but skipped it on purpose"
+        MatchState.ERROR -> "A rule matched but could not build the transaction"
+        MatchState.DUPLICATE -> "Treated as a duplicate of a recent payment"
+        null -> "Nothing to run the rules against"
+    }
+
+    fun refreshServerStatus() = viewModelScope.launch {
+        _busy.value = true
+        _message.value = when (val result = repo.refreshServerStatus()) {
+            is ApiResult.Ok ->
+                if (result.value == 0) "Nothing waiting on a decision in cash-flow"
+                else "Checked ${result.value} transaction(s) in cash-flow"
+
+            is ApiResult.ClientError -> "Failed: ${result.message}"
+            is ApiResult.ServerError -> "Server error: ${result.message}"
+            is ApiResult.NetworkError -> "No connection: ${result.message}"
+        }
+        _busy.value = false
+    }
+
+    fun webLinkFor(item: OutboxItem): String? = repo.webLinkFor(item)
 
     suspend fun ruleById(id: String): Rule? = repo.ruleById(id)
 

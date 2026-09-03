@@ -1,7 +1,12 @@
 package ch.marty.finreader.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -25,6 +30,7 @@ import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.MatchState
 import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.OutboxState
+import ch.marty.finreader.data.db.ServerStatus
 import ch.marty.finreader.domain.AmountParser
 import ch.marty.finreader.ui.MainViewModel
 import java.text.SimpleDateFormat
@@ -68,10 +74,11 @@ fun InboxScreen(viewModel: MainViewModel, onCreateRule: (Long) -> Unit) {
                 capture = capture,
                 outboxItem = capture.outboxId?.let { outbox[it] },
                 onCreateRule = { onCreateRule(capture.id) },
-                onRematch = { viewModel.rematch(capture.id) },
+                onRerun = { viewModel.rerun(capture.id) },
                 onSendNow = { id -> viewModel.sendNow(id) },
                 onCancel = { id -> viewModel.cancel(id) },
                 onDelete = { viewModel.deleteCapture(capture.id) },
+                webLink = { item -> viewModel.webLinkFor(item) },
             )
         }
     }
@@ -114,20 +121,29 @@ private fun StatusCard(
                     Text("Grant notification access")
                 }
             }
+            if (configured) {
+                TextButton(onClick = { viewModel.refreshServerStatus() }) {
+                    Text("Check what cash-flow did with them")
+                }
+            }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CaptureCard(
     capture: CapturedNotification,
     outboxItem: OutboxItem?,
     onCreateRule: () -> Unit,
-    onRematch: () -> Unit,
+    onRerun: () -> Unit,
     onSendNow: (Long) -> Unit,
     onCancel: (Long) -> Unit,
     onDelete: () -> Unit,
+    webLink: (OutboxItem) -> String?,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
@@ -155,6 +171,7 @@ private fun CaptureCard(
                 outboxItem?.let {
                     StatusChip("${it.currency} ${AmountParser.centsToPlainString(it.amountCents)}")
                 }
+                outboxItem?.serverStatus?.let { StatusChip(serverLabel(it)) }
             }
 
             capture.detail?.let {
@@ -163,19 +180,32 @@ private fun CaptureCard(
             outboxItem?.lastError?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
+            outboxItem?.rejectReason?.takeIf { it.isNotBlank() }?.let {
+                Text("Rejected: $it", style = MaterialTheme.typography.bodySmall)
+            }
 
             HorizontalDivider()
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (capture.matchState != MatchState.MATCHED) {
                     TextButton(onClick = onCreateRule) { Text("Create rule") }
                 }
-                // A rule written after the fact is the normal case while the
-                // rule set is still being built up.
-                if (capture.matchState != MatchState.MATCHED && capture.outboxId == null) {
-                    TextButton(onClick = onRematch) { Text("Try rules again") }
+                // Covers both "no rule existed yet" and "the wrong rule won":
+                // anything already posted is withdrawn before the rules re-run.
+                if (canRerun(outboxItem)) {
+                    TextButton(onClick = onRerun) { Text("Run rules again") }
                 }
                 outboxItem?.let { item ->
+                    if (item.serverStatus != null) {
+                        webLink(item)?.let { url ->
+                            TextButton(onClick = { context.openUrl(url) }) {
+                                Text(
+                                    if (item.serverStatus == ServerStatus.CONFIRMED) "Open entry"
+                                    else "Open in cash-flow",
+                                )
+                            }
+                        }
+                    }
                     if (item.state in setOf(
                             OutboxState.HELD,
                             OutboxState.FAILED_PERMANENT,
@@ -193,6 +223,21 @@ private fun CaptureCard(
             }
         }
     }
+}
+
+/**
+ * A transaction the user already accepted in the web app must stay as it is,
+ * and one mid-flight cannot be withdrawn cleanly.
+ */
+private fun canRerun(item: OutboxItem?): Boolean = when {
+    item == null -> true
+    item.serverStatus == ServerStatus.CONFIRMED -> false
+    else -> item.state != OutboxState.SENDING
+}
+
+/** No browser is an edge case worth surviving, not crashing on. */
+private fun Context.openUrl(url: String) {
+    runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 }
 
 /** A label, not a control — the states here are read-only. */
@@ -230,6 +275,13 @@ private fun stateLabel(capture: CapturedNotification, item: OutboxItem?): String
         MatchState.DUPLICATE -> "duplicate"
         MatchState.ERROR -> "rule error"
     }
+}
+
+private fun serverLabel(status: ServerStatus): String = when (status) {
+    ServerStatus.PENDING -> "open in cash-flow"
+    ServerStatus.CONFIRMED -> "accepted"
+    ServerStatus.REJECTED -> "rejected"
+    ServerStatus.GONE -> "deleted in cash-flow"
 }
 
 private fun timestamp(epochMillis: Long): String =

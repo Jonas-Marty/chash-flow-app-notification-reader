@@ -117,6 +117,20 @@ data class Rule(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
+/** The fate of a posted transaction inside the web app. */
+enum class ServerStatus {
+    /** Sitting on /pending, waiting for a decision. */
+    PENDING,
+
+    /** Accepted; [OutboxItem.confirmedTransactionId] points at the transaction. */
+    CONFIRMED,
+
+    REJECTED,
+
+    /** Posted once, but the row is no longer there — deleted in the web app. */
+    GONE,
+}
+
 enum class OutboxState {
     /** Waiting to be sent (possibly inside the undo window). */
     QUEUED,
@@ -160,6 +174,12 @@ data class OutboxItem(
     val attempts: Int = 0,
     val lastError: String? = null,
     val remotePendingId: String? = null,
+    /** What the web app has done with it since, null until first checked. */
+    val serverStatus: ServerStatus? = null,
+    /** Set once the pending transaction is confirmed; links to /edit/<id>. */
+    val confirmedTransactionId: String? = null,
+    val rejectReason: String? = null,
+    val statusCheckedAt: Long = 0,
     /** Epoch millis before which this must not be sent — the undo window. */
     val notBefore: Long = 0,
     val createdAt: Long = System.currentTimeMillis(),

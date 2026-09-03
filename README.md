@@ -36,9 +36,18 @@ notification  ->  allowlisted app?  ->  captured  ->  rules  ->  outbox  ->  POS
    notifications → FinReader. The app links you there and shows the current state.
 5. **Apps tab** — enable Twint / Revolut / your card and bank apps.
 6. Make a payment, open **Inbox**, hit *Create rule*, adjust the pre-filled
-   pattern, pick the account, save. Back in the Inbox, *Try rules again* re-runs
+   pattern, pick the account, save. Back in the Inbox, *Run rules again* re-runs
    the rules against that stored notification, so a capture that arrived before
    its rule existed still gets posted.
+
+Each Inbox card also shows what cash-flow did with the transaction — *open in
+cash-flow*, *accepted*, *rejected* — with a button that jumps straight to
+`/pending` or, once accepted, to the entry in edit mode. *Check what cash-flow
+did with them* refreshes those labels; the background sync does it too.
+
+*Run rules again* works on an already-posted transaction as well: the pending
+entry is deleted in cash-flow and recreated if a rule still matches. One you
+have already accepted is off limits — undo it in cash-flow first.
 
 Every named group of the pattern is a `{placeholder}` in the description and note
 templates. Add modifiers after a colon when the value has to survive as a hashtag —

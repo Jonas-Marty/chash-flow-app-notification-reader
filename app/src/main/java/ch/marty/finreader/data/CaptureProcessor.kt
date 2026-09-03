@@ -54,16 +54,15 @@ class CaptureProcessor(
     }
 
     /**
-     * Runs today's rules against a capture that was stored earlier — the case
-     * where the rule was written *after* the notification arrived, so the
-     * capture is sitting in the inbox marked "no rule".
+     * Runs today's rules against a capture stored earlier — the case where the
+     * rule was written *after* the notification arrived.
      *
-     * A capture that already produced an outbox item is left alone: re-running
-     * it would post the payment a second time under a fresh `external_ref`.
+     * The capture must not still own an outbox item: withdrawing that one,
+     * locally and on the server, is the caller's job, and skipping it would
+     * post the same payment twice under different refs.
      */
-    suspend fun rematch(capturedId: Long): MatchState? {
+    suspend fun reevaluate(capturedId: Long): MatchState? {
         val capture = db.captured().byId(capturedId) ?: return null
-        if (capture.matchState == MatchState.MATCHED || capture.outboxId != null) return null
         evaluate(capturedId, capture.toInput())
         return db.captured().byId(capturedId)?.matchState
     }

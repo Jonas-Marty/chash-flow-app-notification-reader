@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -14,7 +16,7 @@ import androidx.room.RoomDatabase
         AccountCache::class,
         CategoryCache::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -25,6 +27,20 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun cache(): CacheDao
 
     companion object {
+        /**
+         * Adds the web app's verdict to a posted item. Destructive migration is
+         * not an option here — the phone holds the only copy of the captures and
+         * the rules written against them.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN serverStatus TEXT")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN confirmedTransactionId TEXT")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN rejectReason TEXT")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN statusCheckedAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -33,7 +49,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "finreader.db",
-            ).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
         }
     }
 }
