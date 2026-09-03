@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import ch.marty.finreader.ui.MainViewModel
+import ch.marty.finreader.util.AppVersion
 import kotlinx.coroutines.launch
 
 @Composable
@@ -67,6 +68,24 @@ fun SettingsScreen(viewModel: MainViewModel) {
         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // Top of the screen on purpose: "which build is actually installed" is
+        // the first thing worth answering after sideloading an APK.
+        BuildLine(
+            onCopy = {
+                scope.launch {
+                    clipboard.setClipEntry(
+                        ClipEntry(
+                            android.content.ClipData.newPlainText(
+                                "FinReader build",
+                                "FinReader ${AppVersion.full(context)}",
+                            ),
+                        ),
+                    )
+                }
+            },
+        )
+
+        HorizontalDivider()
         Text("Web app", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
             value = baseUrl,
@@ -180,6 +199,37 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 )
             }
         }
+    }
+}
+
+/**
+ * The installed version comes from the package manager and the commit from
+ * `BuildConfig`, so a mismatch between the two would itself be the answer:
+ * the APK on the phone is not the one just built.
+ */
+@Composable
+private fun BuildLine(onCopy: () -> Unit) {
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("FinReader ${AppVersion.name(context)}", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "commit ${AppVersion.commit}",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+            )
+            if (AppVersion.commit.endsWith("+")) {
+                Text(
+                    "+ — built with uncommitted changes",
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+        OutlinedButton(onClick = onCopy) { Text("Copy") }
     }
 }
 

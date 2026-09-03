@@ -25,6 +25,28 @@ fun signingValue(prop: String, env: String): String? =
 val releaseStorePath = signingValue("storeFile", "FINREADER_KEYSTORE")
 val hasReleaseSigning = releaseStorePath != null && file(releaseStorePath).isFile
 
+/**
+ * Stamps the APK with the commit it was built from, so a diagnostics report
+ * pins down an exact source state. Never fails a build: git may be missing,
+ * the tree may be a source archive, and CI hands the sha over in an env var.
+ */
+fun gitOutput(vararg command: String): String? = runCatching {
+    val process = ProcessBuilder(*command)
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+    val text = process.inputStream.bufferedReader().readText().trim()
+    if (process.waitFor() == 0 && text.isNotBlank()) text else null
+}.getOrNull()
+
+val gitSha: String = (
+    System.getenv("GITHUB_SHA")?.take(7)
+        ?: gitOutput("git", "rev-parse", "--short", "HEAD")
+        ?: "unknown"
+    // A "+" means the build carried uncommitted changes, so the sha alone does
+    // not describe it.
+    ) + if (gitOutput("git", "status", "--porcelain").isNullOrBlank()) "" else "+"
+
 android {
     namespace = "ch.marty.finreader"
     compileSdk = 36
@@ -33,9 +55,10 @@ android {
         applicationId = "ch.marty.finreader"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.1.4"
+        versionCode = 6
+        versionName = "0.1.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
     }
 
     signingConfigs {

@@ -28,10 +28,7 @@ object CrashLog {
     fun install(context: Context) {
         val app = context.applicationContext
         file = File(app.filesDir, FILE_NAME)
-        appVersion = runCatching {
-            val info = app.packageManager.getPackageInfo(app.packageName, 0)
-            "${info.versionName} (${info.longVersionCode})"
-        }.getOrDefault("?")
+        appVersion = AppVersion.full(app)
 
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
