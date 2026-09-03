@@ -56,6 +56,12 @@ templates. Add modifiers after a colon when the value has to survive as a hashta
 
 ## When something goes wrong
 
+**Settings opens with the running build** — `FinReader 0.1.5 (6)` and the commit
+it was built from — so "did that APK actually install?" has an answer on the
+phone. A `+` after the commit means the build carried uncommitted changes.
+`scripts/build-apk.sh test` compiles and tests but packages nothing; only
+`assembleRelease` / `assembleDebug` produce an APK.
+
 **Settings → Diagnostics → Show report.** An uncaught exception is written to
 `crash.log` in app storage before the process dies, so the trace is still there
 after the restart; the report adds device/version info and the recent logcat of
