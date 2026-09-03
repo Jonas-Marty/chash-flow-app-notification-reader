@@ -64,6 +64,27 @@ fi
 
 docker run "${run_args[@]}" "$IMAGE" ./gradlew --no-daemon "${args[@]}"
 
+# Only tasks that package produce an APK. Listing whatever is lying in outputs/
+# after a run that packaged nothing makes a leftover file look like this build's
+# output — which is how an APK from before a version bump gets shipped. A task
+# that was UP-TO-DATE still counts: the file on disk is what it would produce.
+packaged=false
+for arg in "${args[@]}"; do
+    case "$arg" in
+        assemble* | bundle* | build | install* | package*) packaged=true ;;
+    esac
+done
+
 echo
-echo "APKs:"
-find "$ROOT/app/build/outputs/apk" -name '*.apk' 2>/dev/null || echo "  (none)"
+apks=$(find "$ROOT/app/build/outputs/apk" -name '*.apk' 2>/dev/null | sort)
+if [ -z "$apks" ]; then
+    echo "No APKs in app/build/outputs/apk."
+elif [ "$packaged" = true ]; then
+    echo "APKs:"
+else
+    echo "'${args[*]}' packages nothing — these are left over from an earlier run."
+    echo "Run assembleRelease or assembleDebug for a current APK."
+fi
+[ -n "$apks" ] && echo "$apks" | while read -r apk; do
+    echo "  $apk ($(date -r "$apk" '+%Y-%m-%d %H:%M'))"
+done
