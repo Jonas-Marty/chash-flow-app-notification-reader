@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import ch.marty.finreader.AppContainer
+import ch.marty.finreader.data.OutboxLocation
 import ch.marty.finreader.data.api.ApiResult
+import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.OutboxState
 import java.util.concurrent.TimeUnit
 
@@ -26,7 +28,8 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
         for (item in due) {
             outbox.updateState(item.id, OutboxState.SENDING, notBefore = item.notBefore)
-            when (val result = container.api.postPending(item.payloadJson)) {
+            val payload = withLocation(container, item)
+            when (val result = container.api.postPending(payload)) {
                 is ApiResult.Ok -> {
                     outbox.updateResult(
                         id = item.id,
@@ -78,6 +81,36 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         }
 
         return if (shouldRetry) Result.retry() else Result.success()
+    }
+
+    /**
+     * Last chance to improve the fix taken when the notification arrived. The
+     * undo window has just elapsed, so the phone has had a few seconds of
+     * standing still at the till — often the difference between a cell-tower
+     * guess and something that actually picks out the right branch.
+     */
+    private suspend fun withLocation(container: AppContainer, item: OutboxItem): String {
+        val settings = container.settings.current()
+        if (!settings.captureLocation) return OutboxLocation.inject(item.payloadJson, null)
+
+        val stored = OutboxLocation.storedFix(item)
+        val fresh = if (OutboxLocation.isGoodEnough(stored, System.currentTimeMillis())) {
+            null
+        } else {
+            container.locationCapture.fresh(OutboxLocation.REFINE_TIMEOUT_MS)
+        }
+        val fix = OutboxLocation.choose(stored, fresh, System.currentTimeMillis(), settings)
+
+        if (fix != null && fix != stored) {
+            container.db.outbox().updateLocation(
+                id = item.id,
+                latitude = fix.latitude,
+                longitude = fix.longitude,
+                accuracyM = fix.accuracyM,
+                takenAt = fix.takenAt,
+            )
+        }
+        return OutboxLocation.inject(item.payloadJson, fix)
     }
 
     private companion object {

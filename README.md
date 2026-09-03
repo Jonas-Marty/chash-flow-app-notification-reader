@@ -24,7 +24,7 @@ notification  ->  allowlisted app?  ->  captured  ->  rules  ->  outbox  ->  POS
    category, description and note. The rule editor tests live against past captures
    and shows the exact payload that would be posted.
 4. **Settings** — server URL and API token, auto-post on/off, feedback notifications,
-   undo window, retention, rules export/import as JSON.
+   undo window, retention, location capture, rules export/import as JSON.
 
 ## Setup on the phone
 
@@ -39,6 +39,13 @@ notification  ->  allowlisted app?  ->  captured  ->  rules  ->  outbox  ->  POS
    pattern, pick the account, save. Back in the Inbox, *Run rules again* re-runs
    the rules against that stored notification, so a capture that arrived before
    its rule existed still gets posted.
+
+Optionally, **Settings → Location** attaches where the payment happened. The fix
+is taken from the platform's own provider (no Play Services) when the notification
+arrives and improved once more while the undo window runs; it is sent only if it is
+under 10 minutes old and accurate to 500 m. Android needs location set to *Allow all
+the time*, because both the listener and the sender run in the background — the
+switch says so and links to the right screen. Off by default.
 
 Each Inbox card also shows what cash-flow did with the transaction — *open in
 cash-flow*, *accepted*, *rejected* — with a button that jumps straight to

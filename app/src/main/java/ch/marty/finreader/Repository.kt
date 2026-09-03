@@ -2,8 +2,11 @@ package ch.marty.finreader
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import ch.marty.finreader.data.CaptureProcessor
+import ch.marty.finreader.data.LocationCapture
 import ch.marty.finreader.data.api.ApiResult
 import ch.marty.finreader.data.api.FinanceApi
 import ch.marty.finreader.data.db.AccountCache
@@ -54,6 +57,7 @@ class Repository(
     private val settings: SettingsStore,
     private val api: FinanceApi,
     private val captureProcessor: CaptureProcessor,
+    private val locationCapture: LocationCapture,
 ) {
 
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
@@ -76,6 +80,33 @@ class Repository(
 
     fun notificationAccessIntent(): Intent =
         Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+
+    /**
+     * Whether the app may *post* notifications — a different grant from reading
+     * them. Without it the undo window still runs, but silently: nothing
+     * appears and there is nothing to tap.
+     */
+    fun canPostNotifications(): Boolean =
+        NotificationManagerCompat.from(context).areNotificationsEnabled()
+
+    /** The per-app notification screen, the only route back after a denial. */
+    fun notificationSettingsIntent(): Intent =
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+
+    fun hasLocationPermission(): Boolean = locationCapture.isPermitted()
+
+    /**
+     * Both the listener and the outbox worker read location from the
+     * background, so the foreground grant alone gets us nothing. Android 11+
+     * refuses to hand this out from a dialog — only from the app's own
+     * settings page, which is what [appDetailsIntent] opens.
+     */
+    fun hasBackgroundLocationPermission(): Boolean = locationCapture.hasBackgroundPermission()
+
+    fun appDetailsIntent(): Intent =
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", context.packageName, null))
 
     suspend fun installedApps(): List<InstalledApp> = withContext(Dispatchers.IO) {
         val pm = context.packageManager

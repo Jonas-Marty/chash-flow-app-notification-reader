@@ -30,6 +30,7 @@ class CaptureProcessor(
     private val db: AppDatabase,
     private val settings: SettingsStore,
     private val notifier: Notifier,
+    private val locationCapture: LocationCapture,
 ) {
 
     private val json = Json { explicitNulls = false; encodeDefaults = true }
@@ -130,6 +131,9 @@ class CaptureProcessor(
 
         val holdForTap = !config.autoPostEnabled || !rule.autoPost
         val undoWindow = if (holdForTap) 0L else config.undoWindowMillis
+        // Instant and possibly stale. The outbox worker gets a chance to
+        // improve on it before the item is actually posted.
+        val fix = if (config.captureLocation) locationCapture.lastKnown() else null
         val item = OutboxItem(
             capturedId = capturedId,
             ruleId = rule.id,
@@ -141,6 +145,10 @@ class CaptureProcessor(
             description = extraction.description,
             state = if (holdForTap) OutboxState.HELD else OutboxState.QUEUED,
             notBefore = now + undoWindow,
+            latitude = fix?.latitude,
+            longitude = fix?.longitude,
+            locationAccuracyM = fix?.accuracyM,
+            locationAt = fix?.takenAt ?: 0,
         )
         val outboxId = db.outbox().insert(item)
         db.captured().updateOutcome(capturedId, MatchState.MATCHED, rule.id, outboxId, null)

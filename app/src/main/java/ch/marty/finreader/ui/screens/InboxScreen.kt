@@ -53,7 +53,7 @@ fun InboxScreen(viewModel: MainViewModel, onCreateRule: (Long) -> Unit) {
             StatusCard(
                 notificationAccess = access,
                 configured = settings.isConfigured,
-                onGrant = { viewModel.refreshNotificationAccess() },
+                onGrant = { viewModel.refreshPermissions() },
                 viewModel = viewModel,
             )
         }
@@ -94,6 +94,7 @@ private fun StatusCard(
     val context = androidx.compose.ui.platform.LocalContext.current
     val unsent by viewModel.unsentCount.collectAsState()
     val failed by viewModel.failedCount.collectAsState()
+    val canPost by viewModel.notificationsAllowed.collectAsState()
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -111,7 +112,23 @@ private fun StatusCard(
                 color = if (configured) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.error,
             )
+            // Reading notifications and posting them are separate grants, and a
+            // denied POST_NOTIFICATIONS is invisible: captures still work, but
+            // the undo window passes with nothing to tap.
+            if (!canPost) {
+                Text(
+                    "Cannot show notifications — no capture alerts and no undo",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             Text("$unsent waiting to send · $failed failed", style = MaterialTheme.typography.bodySmall)
+
+            if (!canPost) {
+                TextButton(onClick = { context.openUrlOrSettings(viewModel.notificationSettingsIntent()) }) {
+                    Text("Allow notifications")
+                }
+            }
 
             if (!notificationAccess) {
                 TextButton(onClick = {
@@ -238,6 +255,20 @@ private fun canRerun(item: OutboxItem?): Boolean = when {
 /** No browser is an edge case worth surviving, not crashing on. */
 private fun Context.openUrl(url: String) {
     runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+}
+
+/** Some OEM builds lack the per-app notification screen; fall back to the app's. */
+private fun Context.openUrlOrSettings(intent: Intent) {
+    runCatching { startActivity(intent) }.onFailure {
+        runCatching {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null),
+                ),
+            )
+        }
+    }
 }
 
 /** A label, not a control — the states here are read-only. */

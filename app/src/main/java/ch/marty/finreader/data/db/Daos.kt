@@ -188,6 +188,20 @@ interface OutboxDao {
         now: Long = System.currentTimeMillis(),
     )
 
+    @Query(
+        """UPDATE outbox_item
+           SET latitude = :latitude, longitude = :longitude,
+               locationAccuracyM = :accuracyM, locationAt = :takenAt
+           WHERE id = :id""",
+    )
+    suspend fun updateLocation(
+        id: Long,
+        latitude: Double?,
+        longitude: Double?,
+        accuracyM: Float?,
+        takenAt: Long,
+    )
+
     /** Used by a re-run, once the row it refers to is gone from the server. */
     @Query("DELETE FROM outbox_item WHERE id = :id")
     suspend fun deleteById(id: Long)

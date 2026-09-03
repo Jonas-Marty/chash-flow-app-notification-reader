@@ -1,5 +1,6 @@
 package ch.marty.finreader.ui.screens
 
+import android.Manifest
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -142,6 +143,9 @@ fun SettingsScreen(viewModel: MainViewModel) {
         }
 
         HorizontalDivider()
+        LocationSection(viewModel, settings.captureLocation)
+
+        HorizontalDivider()
         Text("Backup", style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { exportLauncher.launch("finreader-rules.json") }) {
@@ -200,6 +204,69 @@ fun SettingsScreen(viewModel: MainViewModel) {
             }
         }
     }
+}
+
+/**
+ * Location is the one capture that costs a permission the app can work without,
+ * so the switch asks for it on the way on and says plainly what is missing
+ * afterwards — a denial otherwise shows up only as transactions that quietly
+ * arrive without a place.
+ */
+@Composable
+private fun LocationSection(viewModel: MainViewModel, enabled: Boolean) {
+    val context = LocalContext.current
+    val foreground by viewModel.locationAllowed.collectAsState()
+    val background by viewModel.backgroundLocationAllowed.collectAsState()
+
+    val request = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        viewModel.refreshPermissions()
+        // Left off on a denial rather than on and silently doing nothing.
+        viewModel.saveSettings { copy(captureLocation = result.values.any { it }) }
+    }
+
+    Text("Location", style = MaterialTheme.typography.titleMedium)
+    SwitchRow(
+        title = "Attach where the payment happened",
+        subtitle = "Taken when the notification arrives and improved while the undo window runs.",
+        checked = enabled,
+    ) { on ->
+        if (!on) {
+            viewModel.saveSettings { copy(captureLocation = false) }
+        } else if (foreground) {
+            viewModel.saveSettings { copy(captureLocation = true) }
+        } else {
+            request.launch(
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+            )
+        }
+    }
+
+    if (!enabled) return
+
+    when {
+        !foreground -> PermissionNote(
+            "Location permission was denied — nothing is attached until it is granted.",
+        ) { context.startActivity(viewModel.appDetailsIntent()) }
+
+        !background -> PermissionNote(
+            "Set location access to \"Allow all the time\": payments are captured while the app " +
+                "is closed, and Android only offers that setting on the app's own screen.",
+        ) { context.startActivity(viewModel.appDetailsIntent()) }
+
+        else -> Text(
+            "Only sent when the fix is less than 10 minutes old and accurate to 500 m; " +
+                "the web app shows it as the transaction's place and lets you correct it.",
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
+private fun PermissionNote(text: String, onOpen: () -> Unit) {
+    Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+    OutlinedButton(onClick = onOpen) { Text("Open app settings") }
 }
 
 /**

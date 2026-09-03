@@ -64,6 +64,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _notificationAccess = MutableStateFlow(repo.isNotificationAccessGranted())
     val notificationAccess: StateFlow<Boolean> = _notificationAccess
 
+    /** Posting notifications, not reading them — a separate grant. */
+    private val _notificationsAllowed = MutableStateFlow(repo.canPostNotifications())
+    val notificationsAllowed: StateFlow<Boolean> = _notificationsAllowed
+
+    /** Foreground grant; without it nothing is read at all. */
+    private val _locationAllowed = MutableStateFlow(repo.hasLocationPermission())
+    val locationAllowed: StateFlow<Boolean> = _locationAllowed
+
+    /** "Allow all the time"; without it only a foreground read would work. */
+    private val _backgroundLocationAllowed = MutableStateFlow(repo.hasBackgroundLocationPermission())
+    val backgroundLocationAllowed: StateFlow<Boolean> = _backgroundLocationAllowed
+
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
@@ -87,11 +99,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _message.value = "Crash log cleared"
     }
 
-    fun refreshNotificationAccess() {
+    /** Cheap enough to re-read all of them whenever the app comes forward. */
+    fun refreshPermissions() {
         _notificationAccess.value = repo.isNotificationAccessGranted()
+        _notificationsAllowed.value = repo.canPostNotifications()
+        _locationAllowed.value = repo.hasLocationPermission()
+        _backgroundLocationAllowed.value = repo.hasBackgroundLocationPermission()
     }
 
     fun notificationAccessIntent() = repo.notificationAccessIntent()
+
+    fun notificationSettingsIntent() = repo.notificationSettingsIntent()
+
+    fun appDetailsIntent() = repo.appDetailsIntent()
 
     fun consumeMessage() {
         _message.value = null

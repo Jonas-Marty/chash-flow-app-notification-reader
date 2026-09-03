@@ -53,6 +53,11 @@ data class PendingTransactionPayload(
     @SerialName("external_source") val externalSource: String? = null,
     @SerialName("external_ref") val externalRef: String? = null,
     @SerialName("external_info") val externalInfo: String? = null,
+    /** Sent only as a pair; the server rejects one without the other. */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    @SerialName("location_accuracy_m") val locationAccuracyM: Float? = null,
+    @SerialName("location_source") val locationSource: String? = null,
 )
 
 @Serializable

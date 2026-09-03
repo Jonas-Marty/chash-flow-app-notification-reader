@@ -18,8 +18,20 @@ data class Settings(
     val retentionDays: Int = 30,
     val maxCapturedRows: Int = 1000,
     val lastCacheSync: Long = 0,
+    /** Off by default: location is an extra permission and an extra risk. */
+    val captureLocation: Boolean = false,
 ) {
     val isConfigured: Boolean get() = baseUrl.isNotBlank() && apiToken.isNotBlank()
+
+    /**
+     * A fix older than this is not where the payment happened. It matters for
+     * the card notifications that arrive once you are already home, where the
+     * last known location would otherwise be attached with confidence.
+     */
+    val locationMaxAgeMillis: Long get() = 10 * 60 * 1000L
+
+    /** Beyond this the fix says "somewhere in this town" and is not worth storing. */
+    val locationMaxAccuracyM: Float get() = 500f
 
     /** Undo is only offered while a feedback notification is actually shown. */
     val undoWindowMillis: Long
@@ -55,6 +67,7 @@ class SettingsStore(context: Context) {
         retentionDays = prefs.getInt(KEY_RETENTION, 30),
         maxCapturedRows = prefs.getInt(KEY_MAX_ROWS, 1000),
         lastCacheSync = prefs.getLong(KEY_LAST_SYNC, 0),
+        captureLocation = prefs.getBoolean(KEY_CAPTURE_LOCATION, false),
     )
 
     fun observe(): Flow<Settings> = callbackFlow {
@@ -75,6 +88,7 @@ class SettingsStore(context: Context) {
             .putInt(KEY_RETENTION, next.retentionDays.coerceIn(1, 365))
             .putInt(KEY_MAX_ROWS, next.maxCapturedRows.coerceIn(50, 20_000))
             .putLong(KEY_LAST_SYNC, next.lastCacheSync)
+            .putBoolean(KEY_CAPTURE_LOCATION, next.captureLocation)
             .apply()
     }
 
@@ -87,6 +101,7 @@ class SettingsStore(context: Context) {
         private const val KEY_RETENTION = "retention_days"
         private const val KEY_MAX_ROWS = "max_captured_rows"
         private const val KEY_LAST_SYNC = "last_cache_sync"
+        private const val KEY_CAPTURE_LOCATION = "capture_location"
 
         fun normalizeBaseUrl(raw: String): String {
             val trimmed = raw.trim().trimEnd('/')

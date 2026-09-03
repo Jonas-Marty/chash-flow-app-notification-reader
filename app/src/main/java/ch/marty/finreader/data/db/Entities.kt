@@ -180,6 +180,16 @@ data class OutboxItem(
     val confirmedTransactionId: String? = null,
     val rejectReason: String? = null,
     val statusCheckedAt: Long = 0,
+    /**
+     * Where the payment happened, if location capture is on. Held on the item
+     * rather than baked into [payloadJson] so the outbox worker can improve it
+     * with a fresher fix right up to the moment it posts.
+     */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val locationAccuracyM: Float? = null,
+    /** When the fix was taken — a stale one is not where the payment happened. */
+    val locationAt: Long = 0,
     /** Epoch millis before which this must not be sent — the undo window. */
     val notBefore: Long = 0,
     val createdAt: Long = System.currentTimeMillis(),

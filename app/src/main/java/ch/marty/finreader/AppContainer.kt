@@ -2,6 +2,7 @@ package ch.marty.finreader
 
 import android.content.Context
 import ch.marty.finreader.data.CaptureProcessor
+import ch.marty.finreader.data.LocationCapture
 import ch.marty.finreader.data.api.FinanceApi
 import ch.marty.finreader.data.db.AppDatabase
 import ch.marty.finreader.data.prefs.SettingsStore
@@ -19,9 +20,10 @@ class AppContainer private constructor(context: Context) {
     val settings: SettingsStore by lazy { SettingsStore(appContext) }
     val api: FinanceApi by lazy { FinanceApi(settings) }
     val notifier: Notifier by lazy { Notifier(appContext) }
-    val repository: Repository by lazy { Repository(appContext, db, settings, api, captureProcessor) }
+    val locationCapture: LocationCapture by lazy { LocationCapture(appContext) }
+    val repository: Repository by lazy { Repository(appContext, db, settings, api, captureProcessor, locationCapture) }
     val captureProcessor: CaptureProcessor by lazy {
-        CaptureProcessor(appContext, db, settings, notifier)
+        CaptureProcessor(appContext, db, settings, notifier, locationCapture)
     }
 
     companion object {

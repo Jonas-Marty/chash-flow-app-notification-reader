@@ -46,12 +46,22 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
 
+    /**
+     * Registered as a field, which is what the contract requires: registering
+     * inside a conditional in `onCreate` is fragile across recreation.
+     */
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            viewModel.refreshPermissions()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-                .launch(Manifest.permission.POST_NOTIFICATIONS)
+        // Asked once. A denial is permanent until the user changes it in system
+        // settings, so the Inbox reports the state rather than asking again.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !viewModel.notificationsAllowed.value) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
         setContent {
@@ -63,7 +73,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.refreshNotificationAccess()
+        viewModel.refreshPermissions()
     }
 }
 

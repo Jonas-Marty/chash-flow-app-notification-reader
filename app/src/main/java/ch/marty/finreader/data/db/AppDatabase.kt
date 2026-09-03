@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AccountCache::class,
         CategoryCache::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -41,6 +41,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Where the payment happened, once location capture exists. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN latitude REAL")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN longitude REAL")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN locationAccuracyM REAL")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN locationAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -49,7 +59,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "finreader.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
     }
 }

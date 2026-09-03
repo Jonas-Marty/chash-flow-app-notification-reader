@@ -6,6 +6,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!--
+        Optional: attaches where a payment happened to the pending transaction.
+        Read from the notification listener and the outbox worker, both of which
+        are background, hence ACCESS_BACKGROUND_LOCATION. All three are granted
+        by hand; the app works fully without them.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!--
       Needed to list installed apps in the "monitored apps" picker. The narrow
       <queries> form is used deliberately instead of QUERY_ALL_PACKAGES: we only
       ever need apps that have a launcher entry.

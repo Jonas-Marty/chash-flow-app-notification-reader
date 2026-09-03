@@ -8,7 +8,7 @@ Sideloaded APK only. No Play Store, no analytics, no third-party backend.
 
 ---
 
-## 1. Backend contract (already exists — no server changes needed)
+## 1. Backend contract
 
 Base URL: configured in-app, e.g. `https://<host>`.
 Auth: `Authorization: Bearer <token>` — token generated in cash-flow-jm
@@ -20,6 +20,7 @@ Settings → API Tokens (hashed into `api_tokens`, revocable).
 | GET  | `/api/public/pending-transactions?status=pending` | Connection test / show what is waiting |
 | GET  | `/api/public/accounts` | Populate account picker in rule editor |
 | GET  | `/api/public/categories` | Populate optional category picker |
+| DELETE | `/api/public/pending-transactions` | Withdraw a pending row before a re-run (409 once confirmed) |
 
 ### POST payload
 
@@ -33,7 +34,11 @@ Settings → API Tokens (hashed into `api_tokens`, revocable).
   "description": "Coop Luzern",           // <= 500 chars
   "external_source": "twint",             // <= 120 chars, shown as badge in web UI
   "external_ref": "<sha256 hex, 32 chars>",// <= 200 chars, idempotency key
-  "external_info": "Title — full notification text"  // <= 2000 chars, raw text for review
+  "external_info": "Title — full notification text", // <= 2000 chars, raw text for review
+  "latitude": 47.050123,                  // optional, only ever sent as a pair
+  "longitude": 8.309456,
+  "location_accuracy_m": 24,              // how wrong the fix may be
+  "location_source": "device"             // device | manual | search
 }
 ```
 
@@ -102,13 +107,16 @@ autoPost = true                        // false → capture only, post via manua
 
 **`outbox_item`** — `id`, `capturedId`, `ruleId`, `payloadJson`, `externalRef`,
 `state` (QUEUED | SENDING | POSTED | DEDUPED | FAILED_RETRY | FAILED_PERMANENT),
-`attempts`, `lastError`, `remotePendingId`, timestamps.
+`attempts`, `lastError`, `remotePendingId`, `serverStatus`, `latitude`,
+`longitude`, `locationAccuracyM`, `locationAt`, timestamps.
+The location lives in columns rather than inside `payloadJson` because it is the
+one field that keeps improving until the moment the item is posted.
 
 **`account_cache` / `category_cache`** — mirrors of the two GET endpoints so the
 rule editor works offline. Refreshed on demand and at most hourly on app open.
 
 Settings (EncryptedSharedPreferences): `baseUrl`, `apiToken`, `autoPostEnabled`,
-`feedbackNotificationsEnabled`, `retentionDays`.
+`feedbackNotificationsEnabled`, `retentionDays`, `captureLocation`.
 
 ---
 
@@ -172,6 +180,35 @@ Deleting the row before re-posting matters twice over: the web app's unique
 index on `(user_id, external_source, external_ref)` would otherwise dedupe the
 new post into the old row, and with the outbox row gone the sequence counter
 resets, so the fresh post reuses the original ref rather than inventing `-1`.
+
+### Where the payment happened
+
+Off by default; `Settings.captureLocation` turns it on. Two reads, because
+neither alone is good enough:
+
+1. **On capture** — `LocationCapture.lastKnown()`, instant and free, stored on
+   the outbox item. Often minutes old and somewhere else entirely.
+2. **On send** — `OutboxWorker` waits up to 8 s for `LocationCapture.fresh()`
+   unless the stored fix is already tight (≤ 50 m) and recent (≤ 1 min). The
+   undo window has just elapsed, so the phone has been standing at the till for
+   a few seconds — often the difference between a cell-tower guess and a fix
+   that picks out the right branch.
+
+`OutboxLocation.choose` then applies two gates and takes the most accurate
+survivor: no older than 10 minutes, no coarser than 500 m. A fix that fails
+them is worse than none — the web app cannot tell "roughly here" from "here"
+once it is stored — so it is dropped and the payment posts without a place. A
+fix of *unknown* accuracy is dropped for the same reason.
+
+The platform `LocationManager` is used directly, not Play Services: a sideloaded
+personal APK has no reason to pull that in, and the fused provider's advantage
+is small next to what actually limits us — the notification arrives indoors at a
+till, where the answer comes from WiFi and cell towers either way. Expect tens
+of metres.
+
+Both readers (the listener and the outbox worker) run in the background, so
+`ACCESS_BACKGROUND_LOCATION` is required. Android 11+ will not grant it from a
+dialog, only from the app's own settings page, which is where Settings links.
 
 ### What the web app did with a transaction
 
@@ -294,8 +331,11 @@ so nothing is delayed.
 | `INTERNET` | POST to the API |
 | `POST_NOTIFICATIONS` | own feedback notifications (Android 13+) |
 | `<queries>` launcher intent | list installed apps for the picker (avoids `QUERY_ALL_PACKAGES`) |
+| `ACCESS_COARSE_LOCATION` / `ACCESS_FINE_LOCATION` | optional: where the payment happened |
+| `ACCESS_BACKGROUND_LOCATION` | same, read from the listener and the worker — both background |
 
-No Accessibility service, no screen reading, no storage permission, no location.
+No Accessibility service, no screen reading, no storage permission. Location is
+optional, off by default, and asked for only when the switch is turned on.
 
 ---
 
