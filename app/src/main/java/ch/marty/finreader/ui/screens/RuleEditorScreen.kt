@@ -39,6 +39,7 @@ import ch.marty.finreader.domain.RuleEngine
 import ch.marty.finreader.domain.Template
 import ch.marty.finreader.domain.toInput
 import ch.marty.finreader.ui.MainViewModel
+import ch.marty.finreader.util.CrashLog
 import java.util.Locale
 import java.util.UUID
 
@@ -51,44 +52,83 @@ fun RuleEditorScreen(
 ) {
     val accounts by viewModel.accounts.collectAsState()
     val categories by viewModel.categories.collectAsState()
-    val monitored by viewModel.rules.collectAsState()
+    val existingRules by viewModel.rules.collectAsState()
 
     var rule by remember { mutableStateOf<Rule?>(null) }
-    var samples by remember { mutableStateOf<List<CapturedNotification>>(emptyList()) }
-    var sampleIndex by remember { mutableStateOf(0) }
+    var loadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(ruleId, captureId, accounts) {
         if (rule != null) return@LaunchedEffect
         val fallbackAccount = accounts.firstOrNull()?.id.orEmpty()
-        rule = when {
-            ruleId != null -> viewModel.ruleById(ruleId)
-            captureId > 0 -> viewModel.captureById(captureId)?.let { capture ->
-                RuleDrafter.draft(capture, externalSourceFor(capture.appLabel), fallbackAccount)
-            }
+        runCatching {
+            when {
+                ruleId != null -> viewModel.ruleById(ruleId)
+                captureId > 0 -> viewModel.captureById(captureId)?.let { capture ->
+                    RuleDrafter.draft(capture, externalSourceFor(capture.appLabel), fallbackAccount)
+                }
 
-            else -> Rule(
-                id = UUID.randomUUID().toString(),
-                name = "",
-                packageName = monitored.firstOrNull()?.packageName.orEmpty(),
-                textPattern = """(?<currency>CHF|EUR)\s*(?<amount>[\d'.,]+)""",
-                sourceAccountId = fallbackAccount,
-                externalSource = "",
-            )
+                else -> Rule(
+                    id = UUID.randomUUID().toString(),
+                    name = "",
+                    packageName = existingRules.firstOrNull()?.packageName.orEmpty(),
+                    textPattern = """(?<currency>CHF|EUR)\s*(?<amount>[\d'.,]+)""",
+                    sourceAccountId = fallbackAccount,
+                    externalSource = "",
+                )
+            }
+        }.onSuccess { drafted ->
+            if (drafted == null && ruleId == null && captureId > 0) {
+                loadError = "That captured notification no longer exists."
+            }
+            rule = drafted
+        }.onFailure { error ->
+            CrashLog.record("Drafting a rule from capture $captureId", error)
+            loadError = "Could not draft a rule: ${error.javaClass.simpleName}: ${error.message}"
         }
     }
 
-    val current = rule ?: run {
-        Text("Loading…", modifier = Modifier.padding(16.dp))
-        return
+    val current = rule
+    when {
+        loadError != null -> Text(
+            loadError.orEmpty(),
+            modifier = Modifier.padding(16.dp),
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        current == null -> Text("Loading…", modifier = Modifier.padding(16.dp))
+
+        else -> RuleEditorContent(
+            viewModel = viewModel,
+            isNew = ruleId == null,
+            current = current,
+            onChange = { rule = it },
+            accounts = accounts,
+            categories = categories,
+            onDone = onDone,
+        )
     }
+}
+
+@Composable
+private fun RuleEditorContent(
+    viewModel: MainViewModel,
+    isNew: Boolean,
+    current: Rule,
+    onChange: (Rule) -> Unit,
+    accounts: List<AccountCache>,
+    categories: List<CategoryCache>,
+    onDone: () -> Unit,
+) {
+    var samples by remember { mutableStateOf<List<CapturedNotification>>(emptyList()) }
+    var sampleIndex by remember { mutableStateOf(0) }
 
     LaunchedEffect(current.packageName) {
-        samples = viewModel.samplesFor(current.packageName)
+        samples = runCatching { viewModel.samplesFor(current.packageName) }.getOrDefault(emptyList())
         sampleIndex = 0
     }
 
     val sample = samples.getOrNull(sampleIndex)
-    val outcome = sample?.let { RuleEngine.apply(current, it.toInput()) }
+    val outcome = sample?.let { runCatching { RuleEngine.apply(current, it.toInput()) }.getOrNull() }
 
     Column(
         modifier = Modifier
@@ -103,7 +143,7 @@ fun RuleEditorScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (ruleId == null) "New rule" else "Edit rule",
+                if (isNew) "New rule" else "Edit rule",
                 style = MaterialTheme.typography.titleLarge,
             )
             Row {
@@ -120,15 +160,15 @@ fun RuleEditorScreen(
             }
         }
 
-        Field("Name", current.name) { rule = current.copy(name = it) }
+        Field("Name", current.name) { onChange(current.copy(name = it)) }
 
-        Field("Package", current.packageName) { rule = current.copy(packageName = it) }
+        Field("Package", current.packageName) { onChange(current.copy(packageName = it)) }
 
         Field(
             "Source badge (external_source)",
             current.externalSource,
             help = "Shown as a badge next to the pending transaction in the web app.",
-        ) { rule = current.copy(externalSource = it) }
+        ) { onChange(current.copy(externalSource = it)) }
 
         LabeledDropdown(
             label = "Account",
@@ -136,11 +176,11 @@ fun RuleEditorScreen(
             selected = accounts.firstOrNull { it.id == current.sourceAccountId },
             optionLabel = { accountLabel(it) },
             onSelect = {
-                rule = current.copy(
+                onChange(current.copy(
                     sourceAccountId = it.id,
                     sourceAccountName = it.name,
                     sourceAccountCurrency = it.currencyCode,
-                )
+                ))
             },
         )
         if (accounts.isEmpty()) {
@@ -156,7 +196,7 @@ fun RuleEditorScreen(
             options = listOf<CategoryCache?>(null) + categories,
             selected = categories.firstOrNull { it.id == current.categoryId },
             optionLabel = { it?.let { c -> c.groupName?.let { g -> "$g · ${c.name}" } ?: c.name } ?: "— none —" },
-            onSelect = { rule = current.copy(categoryId = it?.id, categoryName = it?.name) },
+            onSelect = { onChange(current.copy(categoryId = it?.id, categoryName = it?.name)) },
         )
 
         HorizontalDivider()
@@ -166,36 +206,36 @@ fun RuleEditorScreen(
             current.textPattern,
             monospace = true,
             help = "Regex with named groups, e.g. (?<amount>…). Matched against title + text.",
-        ) { rule = current.copy(textPattern = it) }
+        ) { onChange(current.copy(textPattern = it)) }
 
         Field(
             "Title must contain (optional)",
             current.titlePattern.orEmpty(),
             monospace = true,
-        ) { rule = current.copy(titlePattern = it.ifBlank { null }) }
+        ) { onChange(current.copy(titlePattern = it.ifBlank { null })) }
 
         Field(
             "Skip if this matches (optional)",
             current.excludePattern.orEmpty(),
             monospace = true,
             help = "e.g. a payment request rather than a completed payment.",
-        ) { rule = current.copy(excludePattern = it.ifBlank { null }) }
+        ) { onChange(current.copy(excludePattern = it.ifBlank { null })) }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Field("Amount group", current.amountGroup, modifier = Modifier.weight(1f)) {
-                rule = current.copy(amountGroup = it)
+                onChange(current.copy(amountGroup = it))
             }
             Field("Merchant group", current.merchantGroup.orEmpty(), modifier = Modifier.weight(1f)) {
-                rule = current.copy(merchantGroup = it.ifBlank { null })
+                onChange(current.copy(merchantGroup = it.ifBlank { null }))
             }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Field("Currency group", current.currencyGroup.orEmpty(), modifier = Modifier.weight(1f)) {
-                rule = current.copy(currencyGroup = it.ifBlank { null })
+                onChange(current.copy(currencyGroup = it.ifBlank { null }))
             }
             Field("Default currency", current.defaultCurrency, modifier = Modifier.weight(1f)) {
-                rule = current.copy(defaultCurrency = it.uppercase(Locale.ROOT))
+                onChange(current.copy(defaultCurrency = it.uppercase(Locale.ROOT)))
             }
         }
 
@@ -217,7 +257,7 @@ fun RuleEditorScreen(
                     NumberFormatStyle.EU -> "European (1.234,50)"
                 }
             },
-            onSelect = { rule = current.copy(numberFormat = it) },
+            onSelect = { onChange(current.copy(numberFormat = it)) },
         )
 
         LabeledDropdown(
@@ -231,7 +271,7 @@ fun RuleEditorScreen(
                     TxTypeMode.FROM_PATTERN -> "Income when a pattern matches"
                 }
             },
-            onSelect = { rule = current.copy(txTypeMode = it) },
+            onSelect = { onChange(current.copy(txTypeMode = it)) },
         )
 
         if (current.txTypeMode == TxTypeMode.FROM_PATTERN) {
@@ -240,20 +280,20 @@ fun RuleEditorScreen(
                 current.incomePattern.orEmpty(),
                 monospace = true,
                 help = "e.g. erhalten|Gutschrift|received",
-            ) { rule = current.copy(incomePattern = it.ifBlank { null }) }
+            ) { onChange(current.copy(incomePattern = it.ifBlank { null })) }
         }
 
         Field(
             "Description template",
             current.descriptionTemplate,
             help = "e.g. {merchant} — placeholders are filled from the groups above.",
-        ) { rule = current.copy(descriptionTemplate = it) }
+        ) { onChange(current.copy(descriptionTemplate = it)) }
 
         Field(
             "Note template (optional)",
             current.noteTemplate.orEmpty(),
             help = "Useful for a second currency, e.g. Original: {origCurrency} {origAmount}",
-        ) { rule = current.copy(noteTemplate = it.ifBlank { null }) }
+        ) { onChange(current.copy(noteTemplate = it.ifBlank { null })) }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -261,7 +301,7 @@ fun RuleEditorScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Send automatically", style = MaterialTheme.typography.bodyLarge)
-            Switch(checked = current.autoPost, onCheckedChange = { rule = current.copy(autoPost = it) })
+            Switch(checked = current.autoPost, onCheckedChange = { onChange(current.copy(autoPost = it)) })
         }
 
         HorizontalDivider()

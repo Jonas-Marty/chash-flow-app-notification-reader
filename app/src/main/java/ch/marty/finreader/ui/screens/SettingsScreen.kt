@@ -1,5 +1,6 @@
 package ch.marty.finreader.ui.screens
 
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -7,9 +8,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -23,17 +26,27 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import ch.marty.finreader.ui.MainViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(viewModel: MainViewModel) {
     val settings by viewModel.settings.collectAsState()
     val busy by viewModel.busy.collectAsState()
+    val diagnostics by viewModel.diagnostics.collectAsState()
+    val context = LocalContext.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
 
     var baseUrl by remember { mutableStateOf(settings.baseUrl) }
     var token by remember { mutableStateOf(settings.apiToken) }
@@ -123,6 +136,50 @@ fun SettingsScreen(viewModel: MainViewModel) {
             "The export contains your rules and the list of monitored apps — not the API token.",
             style = MaterialTheme.typography.labelSmall,
         )
+
+        HorizontalDivider()
+        Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "If the app crashes, the stack trace is kept here so it can be read after the restart.",
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (diagnostics == null) {
+                OutlinedButton(onClick = { viewModel.loadDiagnostics() }) { Text("Show report") }
+            } else {
+                OutlinedButton(onClick = { viewModel.hideDiagnostics() }) { Text("Hide") }
+                OutlinedButton(onClick = { viewModel.clearDiagnostics() }) { Text("Clear log") }
+            }
+        }
+        diagnostics?.let { report ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        clipboard.setClipEntry(
+                            ClipEntry(android.content.ClipData.newPlainText("FinReader diagnostics", report)),
+                        )
+                    }
+                }) { Text("Copy") }
+                OutlinedButton(onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "FinReader diagnostics")
+                        putExtra(Intent.EXTRA_TEXT, report)
+                    }
+                    context.startActivity(Intent.createChooser(send, "Share diagnostics"))
+                }) { Text("Share") }
+            }
+            Card(Modifier.fillMaxWidth()) {
+                Text(
+                    report,
+                    modifier = Modifier
+                        .padding(10.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+        }
     }
 }
 

@@ -11,12 +11,15 @@ import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.Rule
 import ch.marty.finreader.data.prefs.Settings
+import ch.marty.finreader.util.CrashLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -59,6 +62,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy
+
+    private val _diagnostics = MutableStateFlow<String?>(null)
+    val diagnostics: StateFlow<String?> = _diagnostics
+
+    fun loadDiagnostics() = viewModelScope.launch {
+        _diagnostics.value = withContext(Dispatchers.IO) { CrashLog.report() }
+    }
+
+    fun hideDiagnostics() {
+        _diagnostics.value = null
+    }
+
+    fun clearDiagnostics() = viewModelScope.launch {
+        withContext(Dispatchers.IO) { CrashLog.clear() }
+        _diagnostics.value = null
+        _message.value = "Crash log cleared"
+    }
 
     fun refreshNotificationAccess() {
         _notificationAccess.value = repo.isNotificationAccessGranted()

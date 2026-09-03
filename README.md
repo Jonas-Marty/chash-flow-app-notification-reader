@@ -38,6 +38,13 @@ notification  ->  allowlisted app?  ->  captured  ->  rules  ->  outbox  ->  POS
 6. Make a payment, open **Inbox**, hit *Create rule from this notification*, adjust
    the pre-filled pattern, pick the account, save.
 
+## When something goes wrong
+
+**Settings → Diagnostics → Show report.** An uncaught exception is written to
+`crash.log` in app storage before the process dies, so the trace is still there
+after the restart; the report adds device/version info and the recent logcat of
+this process. *Copy* or *Share* hands the whole thing over in one piece.
+
 ## Privacy
 
 - Only notifications from apps you explicitly enabled are read or stored.
