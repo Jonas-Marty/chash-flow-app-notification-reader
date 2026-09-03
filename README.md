@@ -35,8 +35,10 @@ notification  ->  allowlisted app?  ->  captured  ->  rules  ->  outbox  ->  POS
 4. Grant notification access: Android Settings → Notifications → Device & app
    notifications → FinReader. The app links you there and shows the current state.
 5. **Apps tab** — enable Twint / Revolut / your card and bank apps.
-6. Make a payment, open **Inbox**, hit *Create rule from this notification*, adjust
-   the pre-filled pattern, pick the account, save.
+6. Make a payment, open **Inbox**, hit *Create rule*, adjust the pre-filled
+   pattern, pick the account, save. Back in the Inbox, *Try rules again* re-runs
+   the rules against that stored notification, so a capture that arrived before
+   its rule existed still gets posted.
 
 Every named group of the pattern is a `{placeholder}` in the description and note
 templates. Add modifiers after a colon when the value has to survive as a hashtag —

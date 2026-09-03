@@ -147,6 +147,18 @@ pattern:
   the `/pending` page. This is the "you pointed the rule at the wrong account"
   warning, not a conversion.
 
+### Re-matching a stored capture
+
+The rules are normally written after the first notification arrives, which
+leaves that first capture marked `UNMATCHED` forever. *Try rules again* in the
+Inbox runs `CaptureProcessor.rematch`, which replays the stored capture through
+the same `evaluate` path as a live notification — same dedupe, same undo window,
+same `occurred_on` (the original `postedAt`, not today).
+
+It refuses on a capture that already has an outbox item. Re-running one would
+enqueue the payment a second time under a fresh `external_ref` sequence, which
+the server would accept as a genuinely separate transaction.
+
 ### Placeholder modifiers
 
 A placeholder may carry modifiers after a colon, applied left to right:

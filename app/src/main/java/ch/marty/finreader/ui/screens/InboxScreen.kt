@@ -7,11 +7,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -68,6 +68,7 @@ fun InboxScreen(viewModel: MainViewModel, onCreateRule: (Long) -> Unit) {
                 capture = capture,
                 outboxItem = capture.outboxId?.let { outbox[it] },
                 onCreateRule = { onCreateRule(capture.id) },
+                onRematch = { viewModel.rematch(capture.id) },
                 onSendNow = { id -> viewModel.sendNow(id) },
                 onCancel = { id -> viewModel.cancel(id) },
                 onDelete = { viewModel.deleteCapture(capture.id) },
@@ -122,6 +123,7 @@ private fun CaptureCard(
     capture: CapturedNotification,
     outboxItem: OutboxItem?,
     onCreateRule: () -> Unit,
+    onRematch: () -> Unit,
     onSendNow: (Long) -> Unit,
     onCancel: (Long) -> Unit,
     onDelete: () -> Unit,
@@ -149,14 +151,9 @@ private fun CaptureCard(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AssistChip(onClick = {}, label = { Text(stateLabel(capture, outboxItem)) })
+                StatusChip(stateLabel(capture, outboxItem))
                 outboxItem?.let {
-                    AssistChip(
-                        onClick = {},
-                        label = {
-                            Text("${it.currency} ${AmountParser.centsToPlainString(it.amountCents)}")
-                        },
-                    )
+                    StatusChip("${it.currency} ${AmountParser.centsToPlainString(it.amountCents)}")
                 }
             }
 
@@ -172,6 +169,11 @@ private fun CaptureCard(
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (capture.matchState != MatchState.MATCHED) {
                     TextButton(onClick = onCreateRule) { Text("Create rule") }
+                }
+                // A rule written after the fact is the normal case while the
+                // rule set is still being built up.
+                if (capture.matchState != MatchState.MATCHED && capture.outboxId == null) {
+                    TextButton(onClick = onRematch) { Text("Try rules again") }
                 }
                 outboxItem?.let { item ->
                     if (item.state in setOf(
@@ -190,6 +192,22 @@ private fun CaptureCard(
                 TextButton(onClick = onDelete) { Text("Delete") }
             }
         }
+    }
+}
+
+/** A label, not a control — the states here are read-only. */
+@Composable
+private fun StatusChip(label: String) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
     }
 }
 

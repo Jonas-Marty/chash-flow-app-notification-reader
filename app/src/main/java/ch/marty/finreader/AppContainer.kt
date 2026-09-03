@@ -19,7 +19,7 @@ class AppContainer private constructor(context: Context) {
     val settings: SettingsStore by lazy { SettingsStore(appContext) }
     val api: FinanceApi by lazy { FinanceApi(settings) }
     val notifier: Notifier by lazy { Notifier(appContext) }
-    val repository: Repository by lazy { Repository(appContext, db, settings, api) }
+    val repository: Repository by lazy { Repository(appContext, db, settings, api, captureProcessor) }
     val captureProcessor: CaptureProcessor by lazy {
         CaptureProcessor(appContext, db, settings, notifier)
     }

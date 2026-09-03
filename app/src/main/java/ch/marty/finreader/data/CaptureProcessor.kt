@@ -13,6 +13,7 @@ import ch.marty.finreader.domain.ExternalRef
 import ch.marty.finreader.domain.MatchOutcome
 import ch.marty.finreader.domain.NotificationInput
 import ch.marty.finreader.domain.RuleEngine
+import ch.marty.finreader.domain.toInput
 import ch.marty.finreader.notify.Notifier
 import ch.marty.finreader.work.SyncScheduler
 import kotlinx.serialization.encodeToString
@@ -49,9 +50,27 @@ class CaptureProcessor(
             subText = null,
         )
         val capturedId = db.captured().insert(captured)
+        evaluate(capturedId, input.copy(appLabel = monitored.appLabel))
+    }
 
+    /**
+     * Runs today's rules against a capture that was stored earlier — the case
+     * where the rule was written *after* the notification arrived, so the
+     * capture is sitting in the inbox marked "no rule".
+     *
+     * A capture that already produced an outbox item is left alone: re-running
+     * it would post the payment a second time under a fresh `external_ref`.
+     */
+    suspend fun rematch(capturedId: Long): MatchState? {
+        val capture = db.captured().byId(capturedId) ?: return null
+        if (capture.matchState == MatchState.MATCHED || capture.outboxId != null) return null
+        evaluate(capturedId, capture.toInput())
+        return db.captured().byId(capturedId)?.matchState
+    }
+
+    private suspend fun evaluate(capturedId: Long, input: NotificationInput) {
         val rules = db.rules().enabledForPackage(input.packageName)
-        when (val outcome = RuleEngine.evaluate(input.copy(appLabel = monitored.appLabel), rules)) {
+        when (val outcome = RuleEngine.evaluate(input, rules)) {
             is MatchOutcome.NoMatch ->
                 db.captured().updateOutcome(capturedId, MatchState.UNMATCHED, null, null, null)
 

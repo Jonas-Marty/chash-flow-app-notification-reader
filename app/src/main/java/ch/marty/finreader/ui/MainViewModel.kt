@@ -8,6 +8,7 @@ import ch.marty.finreader.AppContainer
 import ch.marty.finreader.InstalledApp
 import ch.marty.finreader.data.api.ApiResult
 import ch.marty.finreader.data.db.CapturedNotification
+import ch.marty.finreader.data.db.MatchState
 import ch.marty.finreader.data.db.MonitoredApp
 import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.Rule
@@ -145,6 +146,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteCapture(id: Long) = viewModelScope.launch { repo.deleteCapture(id) }
+
+    fun rematch(capturedId: Long) = viewModelScope.launch {
+        _message.value = when (val state = repo.rematch(capturedId)) {
+            MatchState.MATCHED -> "Matched — see the amount on the card"
+            MatchState.UNMATCHED -> "Still no rule matches this notification"
+            MatchState.IGNORED -> "A rule matched but skipped it on purpose"
+            MatchState.ERROR -> "A rule matched but could not build the transaction"
+            MatchState.DUPLICATE -> "Treated as a duplicate of a recent payment"
+            null -> "Already sent — nothing to re-match"
+        }
+    }
 
     suspend fun ruleById(id: String): Rule? = repo.ruleById(id)
 

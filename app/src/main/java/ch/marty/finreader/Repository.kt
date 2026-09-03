@@ -3,12 +3,14 @@ package ch.marty.finreader
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
+import ch.marty.finreader.data.CaptureProcessor
 import ch.marty.finreader.data.api.ApiResult
 import ch.marty.finreader.data.api.FinanceApi
 import ch.marty.finreader.data.db.AccountCache
 import ch.marty.finreader.data.db.AppDatabase
 import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.CategoryCache
+import ch.marty.finreader.data.db.MatchState
 import ch.marty.finreader.data.db.MonitoredApp
 import ch.marty.finreader.data.db.OutboxState
 import ch.marty.finreader.data.db.Rule
@@ -39,6 +41,7 @@ class Repository(
     val db: AppDatabase,
     private val settings: SettingsStore,
     private val api: FinanceApi,
+    private val captureProcessor: CaptureProcessor,
 ) {
 
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
@@ -98,6 +101,9 @@ class Repository(
         db.captured().recentForPackage(packageName)
 
     suspend fun deleteCapture(id: Long) = db.captured().delete(id)
+
+    /** Re-runs the current rules against a capture stored earlier. */
+    suspend fun rematch(capturedId: Long): MatchState? = captureProcessor.rematch(capturedId)
 
     /** Re-queues a failed or held item. */
     suspend fun sendNow(outboxId: Long) {
