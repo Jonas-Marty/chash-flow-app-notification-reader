@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import ch.marty.finreader.data.db.AccountCache
 import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.CategoryCache
+import ch.marty.finreader.data.db.MonitoredApp
 import ch.marty.finreader.data.db.NumberFormatStyle
 import ch.marty.finreader.data.db.Rule
 import ch.marty.finreader.data.db.TxTypeMode
@@ -52,7 +53,7 @@ fun RuleEditorScreen(
 ) {
     val accounts by viewModel.accounts.collectAsState()
     val categories by viewModel.categories.collectAsState()
-    val existingRules by viewModel.rules.collectAsState()
+    val monitoredApps by viewModel.monitoredApps.collectAsState()
 
     var rule by remember { mutableStateOf<Rule?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -70,7 +71,7 @@ fun RuleEditorScreen(
                 else -> Rule(
                     id = UUID.randomUUID().toString(),
                     name = "",
-                    packageName = existingRules.firstOrNull()?.packageName.orEmpty(),
+                    packageName = "",
                     textPattern = """(?<currency>CHF|EUR)\s*(?<amount>[\d'.,]+)""",
                     sourceAccountId = fallbackAccount,
                     externalSource = "",
@@ -104,6 +105,7 @@ fun RuleEditorScreen(
             onChange = { rule = it },
             accounts = accounts,
             categories = categories,
+            monitoredApps = monitoredApps,
             onDone = onDone,
         )
     }
@@ -117,6 +119,7 @@ private fun RuleEditorContent(
     onChange: (Rule) -> Unit,
     accounts: List<AccountCache>,
     categories: List<CategoryCache>,
+    monitoredApps: List<MonitoredApp>,
     onDone: () -> Unit,
 ) {
     var samples by remember { mutableStateOf<List<CapturedNotification>>(emptyList()) }
@@ -150,6 +153,7 @@ private fun RuleEditorContent(
                 TextButton(onClick = onDone) { Text("Cancel") }
                 Button(
                     enabled = current.name.isNotBlank() &&
+                        current.packageName.isNotBlank() &&
                         current.textPattern.isNotBlank() &&
                         current.sourceAccountId.isNotBlank(),
                     onClick = {
@@ -162,7 +166,7 @@ private fun RuleEditorContent(
 
         Field("Name", current.name) { onChange(current.copy(name = it)) }
 
-        Field("Package", current.packageName) { onChange(current.copy(packageName = it)) }
+        AppPicker(current, monitoredApps, onChange)
 
         Field(
             "Source badge (external_source)",
@@ -403,6 +407,65 @@ private fun Field(
         help?.let {
             Text(it, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
         }
+    }
+}
+
+/**
+ * The package name is an exact-match filter, not a pattern, so a typo here
+ * disables the rule silently. Offering only real monitored apps removes the
+ * possibility.
+ */
+@Composable
+private fun AppPicker(
+    current: Rule,
+    monitoredApps: List<MonitoredApp>,
+    onChange: (Rule) -> Unit,
+) {
+    val options = remember(monitoredApps, current.packageName) {
+        val enabled = monitoredApps.filter { it.enabled }
+        when {
+            current.packageName.isBlank() -> enabled
+            enabled.any { it.packageName == current.packageName } -> enabled
+            // Keep a rule's own app selectable even after monitoring was turned
+            // off for it, otherwise editing the rule would quietly reassign it.
+            else -> enabled + (
+                monitoredApps.firstOrNull { it.packageName == current.packageName }
+                    ?: MonitoredApp(current.packageName, current.packageName, enabled = false)
+                ).copy(enabled = false)
+        }
+    }
+    val selected = options.firstOrNull { it.packageName == current.packageName }
+
+    LabeledDropdown(
+        label = "App",
+        options = options,
+        selected = selected,
+        optionLabel = { it.appLabel.ifBlank { it.packageName } + if (it.enabled) "" else " (not monitored)" },
+        onSelect = { onChange(current.copy(packageName = it.packageName)) },
+    )
+    when {
+        current.packageName.isBlank() -> Text(
+            if (options.isEmpty()) {
+                "No apps enabled yet — turn one on under Apps first."
+            } else {
+                "Which app's notifications this rule reads."
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        selected?.enabled == false -> Text(
+            "${current.packageName} — notifications from this app are not being read, " +
+                "so the rule will never fire. Enable it under Apps.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        else -> Text(
+            current.packageName,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(start = 4.dp),
+        )
     }
 }
 

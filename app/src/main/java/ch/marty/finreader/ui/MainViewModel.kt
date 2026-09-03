@@ -8,6 +8,7 @@ import ch.marty.finreader.AppContainer
 import ch.marty.finreader.InstalledApp
 import ch.marty.finreader.data.api.ApiResult
 import ch.marty.finreader.data.db.CapturedNotification
+import ch.marty.finreader.data.db.MonitoredApp
 import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.Rule
 import ch.marty.finreader.data.prefs.Settings
@@ -35,6 +36,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val outboxById: StateFlow<Map<Long, OutboxItem>> =
         repo.observeOutbox().map { list -> list.associateBy { it.id } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    /** Drives the app picker in the rule editor; the Apps screen keeps it filled. */
+    val monitoredApps: StateFlow<List<MonitoredApp>> =
+        repo.observeMonitoredApps().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val rules: StateFlow<List<Rule>> =
         repo.observeRules().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
