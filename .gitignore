@@ -12,3 +12,8 @@
 *.keystore
 !/app/debug.keystore
 /keystore.properties
+
+# Claude Code workspace config — ignored on the host too, but the build
+# container has no global gitignore, and a difference here shows up as a
+# spurious "+" on the stamped commit.
+/.claude/
