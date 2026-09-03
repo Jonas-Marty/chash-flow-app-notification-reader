@@ -147,6 +147,25 @@ pattern:
   the `/pending` page. This is the "you pointed the rule at the wrong account"
   warning, not a conversion.
 
+### Placeholder modifiers
+
+A placeholder may carry modifiers after a colon, applied left to right:
+`{merchant:d}`, `{merchant:dl}`. They exist because a value containing a space
+breaks a hashtag — `#{merchant}` on "Coop City" yields the tag `#Coop` followed
+by a stray word.
+
+| Modifier | Effect | `Café & Müller` becomes |
+| --- | --- | --- |
+| `d` | spaces to dashes | `Café-&-Müller` |
+| `u` | spaces to underscores | `Café_&_Müller` |
+| `c` | CamelCase, no spaces | `Café&Müller` |
+| `l` | lowercase | `café & müller` |
+| `a` | drop punctuation and accents | `Cafe Muller` |
+
+`{merchant:ad}` — the usual choice for a tag — gives `Cafe-Muller`. An unknown
+modifier letter is ignored rather than failing the rule, since the editor
+previews the result before anything is posted.
+
 `occurred_on` = local date of `postedAt`.
 
 ---

@@ -14,7 +14,7 @@ import org.junit.Test
 class RegexPortabilityTest {
 
     private val regexLiteral = Regex("""Regex\(\s*(\"{3}([\s\S]*?)\"{3}|"((?:\\.|[^"\\])*)")""")
-    private val quantifier = Regex("""\{\d+(,\d*)?}""")
+    private val quantifier = Regex("""\{\d+(,\d*)?\}""")
 
     @Test
     fun `every hard-coded pattern is ICU-safe`() {
@@ -43,7 +43,8 @@ class RegexPortabilityTest {
         while (index < pattern.length) {
             val char = pattern[index]
             when {
-                char == '\\' -> index++
+                // \p{L}, \P{Mn}, \x{1F600} — braced escapes ICU accepts as they are.
+                char == '\\' -> index += bracedEscapeLength(pattern, index)
                 char == '[' -> inClass = true
                 char == ']' -> inClass = false
                 // Braces are literal inside a character class, and ICU accepts them there.
@@ -56,12 +57,23 @@ class RegexPortabilityTest {
         return null
     }
 
+    /** Characters to skip for the escape at [start], the backslash included. */
+    private fun bracedEscapeLength(pattern: String, start: Int): Int {
+        val letter = pattern.getOrNull(start + 1) ?: return 1
+        if (!letter.isLetter() || pattern.getOrNull(start + 2) != '{') return 1
+        val close = pattern.indexOf('}', start + 3)
+        return if (close < 0) 1 else close - start
+    }
+
     @Test
     fun `the scanner actually rejects the bug it exists for`() {
         assertTrue(unescapedBrace("""\{([A-Za-z]*)}""") == '}')
         assertTrue(unescapedBrace("""\{([A-Za-z]*)\}""") == null)
         assertTrue(unescapedBrace("""\s{2,}""") == null)
         assertTrue(unescapedBrace("""[^\n,.;]{2,60}""") == null)
+        assertTrue(unescapedBrace("""[^\p{L}\p{N}\s_-]""") == null)
+        assertTrue(unescapedBrace("""\p{Mn}+""") == null)
+        assertTrue(unescapedBrace("""\p{L}}""") == '}')
     }
 
     private fun sourceRoot(): File =

@@ -249,6 +249,11 @@ private fun RuleEditorContent(
                     .distinct().joinToString(", ") { "{$it}" },
             style = MaterialTheme.typography.labelSmall,
         )
+        Text(
+            "Add modifiers after a colon — {merchant:d} — and chain them: " +
+                Template.MODIFIERS.joinToString(", ") { (flag, meaning) -> "$flag = $meaning" },
+            style = MaterialTheme.typography.labelSmall,
+        )
 
         LabeledDropdown(
             label = "Number format",
@@ -296,7 +301,7 @@ private fun RuleEditorContent(
         Field(
             "Note template (optional)",
             current.noteTemplate.orEmpty(),
-            help = "Useful for a second currency, e.g. Original: {origCurrency} {origAmount}",
+            help = "Tags and a second currency, e.g. #{merchant:d} or Original: {origCurrency} {origAmount}",
         ) { onChange(current.copy(noteTemplate = it.ifBlank { null })) }
 
         Row(

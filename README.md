@@ -38,6 +38,11 @@ notification  ->  allowlisted app?  ->  captured  ->  rules  ->  outbox  ->  POS
 6. Make a payment, open **Inbox**, hit *Create rule from this notification*, adjust
    the pre-filled pattern, pick the account, save.
 
+Every named group of the pattern is a `{placeholder}` in the description and note
+templates. Add modifiers after a colon when the value has to survive as a hashtag —
+`#{merchant:d}` turns "Coop City" into `#Coop-City`. The full list is in
+[docs/DESIGN.md](docs/DESIGN.md#placeholder-modifiers).
+
 ## When something goes wrong
 
 **Settings → Diagnostics → Show report.** An uncaught exception is written to
