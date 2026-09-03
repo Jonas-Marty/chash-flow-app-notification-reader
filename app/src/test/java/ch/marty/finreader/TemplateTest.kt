@@ -2,6 +2,7 @@ package ch.marty.finreader
 
 import ch.marty.finreader.domain.Template
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TemplateTest {
@@ -56,6 +57,31 @@ class TemplateTest {
         assertEquals("Coop City", Template.render("{merchant}", mapOf("merchant" to "Coop City")))
         assertEquals("Coop City", Template.render("{merchant:z}", mapOf("merchant" to "Coop City")))
         assertEquals("", Template.render("{missing:d}", emptyMap()))
+    }
+
+    /** Pins the examples the rule editor prints under the note template. */
+    @Test
+    fun `the editor's worked examples are real output, and every one differs`() {
+        val shown = Template.MODIFIERS.associate { it.flag to it.example }
+        assertEquals("Caf\u00e9-&-M\u00fcller", shown['d'])
+        assertEquals("Caf\u00e9_&_M\u00fcller", shown['u'])
+        assertEquals("Caf\u00e9&M\u00fcller", shown['c'])
+        assertEquals("caf\u00e9 & m\u00fcller", shown['l'])
+        assertEquals("Cafe Muller", shown['a'])
+        // The demo value earns its keep only if every modifier visibly changes
+        // it — the whole point is that no example can look like a no-op.
+        assertTrue(shown.values.none { it == Template.DEMO_VALUE })
+        assertEquals(shown.size, shown.values.toSet().size)
+    }
+
+    @Test
+    fun `a is a no-op on a value that has nothing to strip`() {
+        // The reported case: "a" looked broken because "Ziemer Skyview" holds
+        // no punctuation and no accents, so :ad and :d cannot differ.
+        val merchant = mapOf("merchant" to "Ziemer Skyview")
+        assertEquals("#Ziemer-Skyview", Template.render("#{merchant:ad}", merchant))
+        assertEquals("#Ziemer-Skyview", Template.render("#{merchant:d}", merchant))
+        assertEquals("Ziemer Skyview", Template.render("{merchant:a}", merchant))
     }
 
     /** Pins the table in docs/DESIGN.md so the documentation cannot drift. */

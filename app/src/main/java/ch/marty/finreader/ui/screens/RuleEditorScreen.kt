@@ -249,11 +249,21 @@ private fun RuleEditorContent(
                     .distinct().joinToString(", ") { "{$it}" },
             style = MaterialTheme.typography.labelSmall,
         )
+        // Each modifier is shown with what it actually does to a value that
+        // exercises it. Without an example there is no way to tell a modifier
+        // that did nothing from one that is not working.
         Text(
-            "Add modifiers after a colon — {merchant:d} — and chain them: " +
-                Template.MODIFIERS.joinToString(", ") { (flag, meaning) -> "$flag = $meaning" },
+            "Add modifiers after a colon — {merchant:ad} — chained left to right. " +
+                "On “${Template.DEMO_VALUE}”:",
             style = MaterialTheme.typography.labelSmall,
         )
+        Template.MODIFIERS.forEach { modifier ->
+            Text(
+                "  :${modifier.flag}  ${modifier.example}   (${modifier.meaning})",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
 
         LabeledDropdown(
             label = "Number format",

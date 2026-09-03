@@ -29,13 +29,26 @@ object Template {
 
     private val COMBINING_MARKS = Regex("""\p{Mn}+""")
 
+    /**
+     * A merchant name that every modifier visibly changes. Most real ones are
+     * plain letters and a space, where `a` has nothing to strip and looks
+     * broken next to `d`.
+     */
+    const val DEMO_VALUE = "Café & Müller"
+
+    /** One modifier, with a worked example the editor shows next to it. */
+    data class ModifierHelp(val flag: Char, val meaning: String) {
+        /** Produced by [render] itself, so the help can never drift from it. */
+        val example: String get() = render("{v:$flag}", mapOf("v" to DEMO_VALUE))
+    }
+
     /** The modifiers, in the order the help text lists them. */
-    val MODIFIERS: List<Pair<Char, String>> = listOf(
-        'd' to "spaces to dashes",
-        'u' to "spaces to underscores",
-        'c' to "CamelCase, no spaces",
-        'l' to "lowercase",
-        'a' to "drop punctuation and accents",
+    val MODIFIERS: List<ModifierHelp> = listOf(
+        ModifierHelp('d', "spaces to dashes"),
+        ModifierHelp('u', "spaces to underscores"),
+        ModifierHelp('c', "CamelCase, no spaces"),
+        ModifierHelp('l', "lowercase"),
+        ModifierHelp('a', "drop punctuation and accents"),
     )
 
     fun render(template: String, values: Map<String, String?>): String =

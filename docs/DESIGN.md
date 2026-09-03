@@ -213,6 +213,12 @@ by a stray word.
 modifier letter is ignored rather than failing the rule, since the editor
 previews the result before anything is posted.
 
+Most real merchant names are plain letters and a space, where `a` has nothing
+to strip and `:ad` reads exactly like `:d`. That looks like a broken modifier,
+so the rule editor prints the table above against `Template.DEMO_VALUE` — every
+row produced by `render` itself, and a test asserts no two rows are alike and
+none equals the input, so an example can never look like a no-op.
+
 `occurred_on` = local date of `postedAt`.
 
 ---
