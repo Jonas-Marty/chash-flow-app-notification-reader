@@ -7,7 +7,13 @@ package ch.marty.finreader.domain
  */
 object Template {
 
-    private val PLACEHOLDER = Regex("\\{([A-Za-z][A-Za-z0-9_]*)}")
+    /**
+     * Both braces are escaped on purpose. Android 14+ backs `java.util.regex`
+     * with ICU, which rejects a bare `}` as a syntax error where the JVM the
+     * unit tests run on quietly treats it as a literal — so an unescaped one
+     * compiles green on the desktop and throws on the phone.
+     */
+    private val PLACEHOLDER = Regex("""\{([A-Za-z][A-Za-z0-9_]*)\}""")
 
     fun render(template: String, values: Map<String, String?>): String =
         PLACEHOLDER.replace(template) { m ->

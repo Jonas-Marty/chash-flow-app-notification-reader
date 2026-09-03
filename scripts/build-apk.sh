@@ -5,6 +5,7 @@
 #   scripts/build-apk.sh test             # unit tests
 #   scripts/build-apk.sh assembleRelease   # signed release, see below
 #   scripts/build-apk.sh bash             # a shell in the container
+#   scripts/build-apk.sh bash -lc '...'    # one command in the container
 #
 # For a signed release, export these before calling:
 #   FINREADER_KEYSTORE (path on the host), FINREADER_KEYSTORE_PASSWORD,
@@ -58,7 +59,7 @@ if [ ! -f "$ROOT/keystore.properties" ] && [ -n "${FINREADER_KEYSTORE:-}" ] && [
 fi
 
 if [ "${args[0]}" = "bash" ]; then
-    exec docker run "${run_args[@]}" "$IMAGE" bash
+    exec docker run "${run_args[@]}" "$IMAGE" bash "${args[@]:1}"
 fi
 
 docker run "${run_args[@]}" "$IMAGE" ./gradlew --no-daemon "${args[@]}"

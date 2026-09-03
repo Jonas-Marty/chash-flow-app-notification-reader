@@ -19,3 +19,8 @@
 # Tink (via androidx.security.crypto) references compile-only annotations.
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
+
+# A personal, sideloaded app is debugged from the crash log in Settings ->
+# Diagnostics. Shrinking is worth keeping; renaming everything to z5.c is not.
+-dontobfuscate
+-keepattributes SourceFile,LineNumberTable
