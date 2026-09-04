@@ -188,11 +188,11 @@ class Repository(
                         )
                         return RerunResult.Refused(ALREADY_ACCEPTED)
                     }
-                    return RerunResult.Refused("Could not remove it in cash-flow: ${deleted.message}")
+                    return RerunResult.Refused(describeDeleteFailure(deleted.message))
                 }
 
                 is ApiResult.ServerError ->
-                    return RerunResult.Refused("Could not remove it in cash-flow: ${deleted.message}")
+                    return RerunResult.Refused(describeDeleteFailure(deleted.message))
 
                 is ApiResult.NetworkError ->
                     return RerunResult.Refused("No connection: ${deleted.message}")
@@ -337,7 +337,22 @@ class Repository(
         }
     }
 
+    /**
+     * cash-flow answers a request it has no handler for by falling through to
+     * its HTML router, which refuses anything that does not accept HTML. So
+     * that particular message means the deployed web app is older than this
+     * app and has no delete endpoint — nothing is wrong with the transaction,
+     * and re-running will work once the server is redeployed.
+     */
+    private fun describeDeleteFailure(message: String): String =
+        if (message.contains(HTML_ONLY, ignoreCase = true)) {
+            "cash-flow has no delete endpoint yet — redeploy the web app, then try again"
+        } else {
+            "Could not remove it in cash-flow: $message"
+        }
+
     private companion object {
+        const val HTML_ONLY = "Only HTML requests are supported"
         const val ALREADY_ACCEPTED =
             "Already accepted in cash-flow — undo it there first if you want to re-run the rules"
     }
