@@ -91,7 +91,12 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
      */
     private suspend fun withLocation(container: AppContainer, item: OutboxItem): String {
         val settings = container.settings.current()
-        if (!settings.captureLocation) return OutboxLocation.inject(item.payloadJson, null)
+        // The rule's verdict was taken when the notification arrived and is not
+        // revisited here; a fresher fix must not smuggle a location into a
+        // payment that was meant to travel without one.
+        if (!settings.captureLocation || !item.attachLocation) {
+            return OutboxLocation.inject(item.payloadJson, null)
+        }
 
         val stored = OutboxLocation.storedFix(item)
         val fresh = if (OutboxLocation.isGoodEnough(stored, System.currentTimeMillis())) {

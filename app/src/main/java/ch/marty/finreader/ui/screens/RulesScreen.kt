@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.ui.MainViewModel
 
 @Composable
@@ -77,7 +78,12 @@ fun RulesScreen(viewModel: MainViewModel, onEdit: (String) -> Unit, onCreate: ()
                         Text(
                             "→ ${rule.sourceAccountName ?: rule.sourceAccountId}" +
                                 (rule.categoryName?.let { " · $it" } ?: "") +
-                                if (rule.autoPost) "" else " · manual",
+                                (if (rule.autoPost) "" else " · manual") +
+                                when (rule.locationMode) {
+                                    LocationMode.ATTACH -> ""
+                                    LocationMode.NEVER -> " · no location"
+                                    LocationMode.UNLESS_PATTERN -> " · location by pattern"
+                                },
                             style = MaterialTheme.typography.labelMedium,
                         )
                         Row {

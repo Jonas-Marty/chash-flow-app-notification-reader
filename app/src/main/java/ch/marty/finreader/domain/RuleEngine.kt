@@ -1,5 +1,6 @@
 package ch.marty.finreader.domain
 
+import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.data.db.NumberFormatStyle
 import ch.marty.finreader.data.db.Rule
 import ch.marty.finreader.data.db.TxTypeMode
@@ -32,6 +33,8 @@ data class Extraction(
     val description: String,
     val note: String?,
     val occurredOn: String,
+    /** Whether this payment may carry the phone's location, see [Rule.locationMode]. */
+    val attachLocation: Boolean = true,
 )
 
 sealed interface MatchOutcome {
@@ -109,6 +112,20 @@ object RuleEngine {
             }
         }
 
+        val attachLocation = when (rule.locationMode) {
+            LocationMode.ATTACH -> true
+            LocationMode.NEVER -> false
+            // A pattern that is missing or does not compile suppresses the fix
+            // rather than attaching one: a typo here must not quietly start
+            // recording where the phone was.
+            LocationMode.UNLESS_PATTERN -> {
+                val regex = rule.locationExcludePattern
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { compile(it) }
+                regex != null && !regex.containsMatchIn(haystack)
+            }
+        }
+
         val occurredOn = localDate(input.postedAt)
         val values = buildMap {
             put("merchant", merchant)
@@ -145,6 +162,7 @@ object RuleEngine {
                 description = description,
                 note = note,
                 occurredOn = occurredOn,
+                attachLocation = attachLocation,
             ),
         )
     }

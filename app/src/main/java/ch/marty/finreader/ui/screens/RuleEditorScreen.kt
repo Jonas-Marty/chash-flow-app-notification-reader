@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import ch.marty.finreader.data.db.AccountCache
 import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.CategoryCache
+import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.data.db.MonitoredApp
 import ch.marty.finreader.data.db.NumberFormatStyle
 import ch.marty.finreader.data.db.Rule
@@ -314,6 +315,35 @@ private fun RuleEditorContent(
             help = "Tags and a second currency, e.g. #{merchant:d} or Original: {origCurrency} {origAmount}",
         ) { onChange(current.copy(noteTemplate = it.ifBlank { null })) }
 
+        LabeledDropdown(
+            label = "Location",
+            options = LocationMode.entries,
+            selected = current.locationMode,
+            optionLabel = {
+                when (it) {
+                    LocationMode.ATTACH -> "Attach where the phone is"
+                    LocationMode.NEVER -> "Never attach a location"
+                    LocationMode.UNLESS_PATTERN -> "Attach unless a pattern matches"
+                }
+            },
+            onSelect = { onChange(current.copy(locationMode = it)) },
+        )
+        Text(
+            "Only applies when Settings → Location is on. An online payment happens " +
+                "wherever the phone is, so those are worth keeping off the map.",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+
+        if (current.locationMode == LocationMode.UNLESS_PATTERN) {
+            Field(
+                "No location when this matches",
+                current.locationExcludePattern.orEmpty(),
+                monospace = true,
+                help = "e.g. online|Abo|subscription — an empty or broken pattern attaches nothing.",
+            ) { onChange(current.copy(locationExcludePattern = it.ifBlank { null })) }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -386,7 +416,8 @@ private fun PreviewResult(outcome: MatchOutcome?, account: AccountCache?) {
                             appendLine("date:        ${e.occurredOn}")
                             appendLine("description: ${e.description}")
                             e.note?.let { appendLine("note:        $it") }
-                            append("account:     ${account?.let { accountLabel(it) } ?: "—"}")
+                            appendLine("account:     ${account?.let { accountLabel(it) } ?: "—"}")
+                            append("location:    ${if (e.attachLocation) "attached" else "not sent"}")
                         },
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = FontFamily.Monospace,

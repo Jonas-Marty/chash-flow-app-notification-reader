@@ -98,6 +98,8 @@ numberFormat: AUTO | SWISS | EU        // 1'234.50 vs 1.234,50
 defaultCurrency = "CHF"
 txType: EXPENSE | INCOME | FROM_PATTERN
 incomePattern: String?                 // FROM_PATTERN: matches → income, else expense
+locationMode = ATTACH                  // ATTACH | NEVER | UNLESS_PATTERN
+locationExcludePattern: String?        // UNLESS_PATTERN: matches → no location
 sourceAccountId                        // uuid from /api/public/accounts
 categoryId: String?                    // optional default
 descriptionTemplate = "{merchant}"     // {merchant} {amount} {currency} {title} {text}
@@ -108,9 +110,12 @@ autoPost = true                        // false → capture only, post via manua
 **`outbox_item`** — `id`, `capturedId`, `ruleId`, `payloadJson`, `externalRef`,
 `state` (QUEUED | SENDING | POSTED | DEDUPED | FAILED_RETRY | FAILED_PERMANENT),
 `attempts`, `lastError`, `remotePendingId`, `serverStatus`, `latitude`,
-`longitude`, `locationAccuracyM`, `locationAt`, timestamps.
+`longitude`, `locationAccuracyM`, `locationAt`, `attachLocation`, timestamps.
 The location lives in columns rather than inside `payloadJson` because it is the
 one field that keeps improving until the moment the item is posted.
+`attachLocation` carries the rule's verdict (below) forward, so the worker's
+refinement pass cannot put a place on a payment that was meant to travel
+without one — by then the rule may have been edited or deleted.
 
 **`account_cache` / `category_cache`** — mirrors of the two GET endpoints so the
 rule editor works offline. Refreshed on demand and at most hourly on app open.
@@ -199,6 +204,29 @@ survivor: no older than 10 minutes, no coarser than 500 m. A fix that fails
 them is worse than none — the web app cannot tell "roughly here" from "here"
 once it is stored — so it is dropped and the payment posts without a place. A
 fix of *unknown* accuracy is dropped for the same reason.
+
+#### Rules that keep a payment off the map
+
+A fix is only worth having when the phone is where the money was spent. For an
+online purchase, a subscription renewal or a standing order it is not: the
+notification arrives at home, and "home" is both the wrong answer and the one
+place worth not recording. `Rule.locationMode` decides per rule:
+
+| mode | effect |
+| --- | --- |
+| `ATTACH` (default) | behaves as before — the fix is taken if Settings → Location is on |
+| `NEVER` | no fix is read at capture and none is attached on send |
+| `UNLESS_PATTERN` | attach, unless `locationExcludePattern` matches the notification |
+
+`UNLESS_PATTERN` exists for the app that reports in-store and online payments
+through the same notification shape, where splitting the rule in two would mean
+duplicating everything else. A pattern that is blank or does not compile
+suppresses the fix rather than attaching one: a typo must not quietly start
+recording where the phone was.
+
+The verdict is taken once, by `RuleEngine.apply`, and rides on the outbox item.
+When it is negative the fix is never read — not at capture, not before sending —
+so the location permission is simply not exercised for those payments.
 
 The platform `LocationManager` is used directly, not Play Services: a sideloaded
 personal APK has no reason to pull that in, and the fused provider's advantage

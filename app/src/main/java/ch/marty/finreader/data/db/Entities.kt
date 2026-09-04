@@ -71,6 +71,22 @@ enum class NumberFormatStyle {
     EU,
 }
 
+/** Whether a payment matched by a rule may carry the phone's location. */
+enum class LocationMode {
+    /** Attach the fix, as long as Settings → Location is on. */
+    ATTACH,
+
+    /**
+     * Never attach. An online payment happens wherever the phone happens to
+     * be — usually at home — which is both the wrong place and one worth not
+     * recording at all.
+     */
+    NEVER,
+
+    /** Attach unless [Rule.locationExcludePattern] matches the notification. */
+    UNLESS_PATTERN,
+}
+
 enum class TxTypeMode {
     EXPENSE,
     INCOME,
@@ -101,6 +117,10 @@ data class Rule(
     val defaultCurrency: String = "CHF",
     val txTypeMode: TxTypeMode = TxTypeMode.EXPENSE,
     val incomePattern: String? = null,
+    /** Whether payments matched by this rule may carry the phone's location. */
+    val locationMode: LocationMode = LocationMode.ATTACH,
+    /** With [LocationMode.UNLESS_PATTERN]: a match here suppresses the fix. */
+    val locationExcludePattern: String? = null,
     /** uuid of an account in the web app. */
     val sourceAccountId: String,
     val sourceAccountName: String? = null,
@@ -190,6 +210,12 @@ data class OutboxItem(
     val locationAccuracyM: Float? = null,
     /** When the fix was taken — a stale one is not where the payment happened. */
     val locationAt: Long = 0,
+    /**
+     * What the rule decided about location for this notification, kept here so
+     * the outbox worker cannot undo it by refining a fix on the way out. The
+     * rule may well have been edited or deleted by then.
+     */
+    val attachLocation: Boolean = true,
     /** Epoch millis before which this must not be sent — the undo window. */
     val notBefore: Long = 0,
     val createdAt: Long = System.currentTimeMillis(),

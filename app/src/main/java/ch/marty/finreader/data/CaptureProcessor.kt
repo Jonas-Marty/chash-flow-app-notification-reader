@@ -132,8 +132,11 @@ class CaptureProcessor(
         val holdForTap = !config.autoPostEnabled || !rule.autoPost
         val undoWindow = if (holdForTap) 0L else config.undoWindowMillis
         // Instant and possibly stale. The outbox worker gets a chance to
-        // improve on it before the item is actually posted.
-        val fix = if (config.captureLocation) locationCapture.lastKnown() else null
+        // improve on it before the item is actually posted — unless the rule
+        // said this payment carries no location at all, in which case the fix
+        // is never read in the first place.
+        val attachLocation = extraction.attachLocation
+        val fix = if (config.captureLocation && attachLocation) locationCapture.lastKnown() else null
         val item = OutboxItem(
             capturedId = capturedId,
             ruleId = rule.id,
@@ -149,6 +152,7 @@ class CaptureProcessor(
             longitude = fix?.longitude,
             locationAccuracyM = fix?.accuracyM,
             locationAt = fix?.takenAt ?: 0,
+            attachLocation = attachLocation,
         )
         val outboxId = db.outbox().insert(item)
         db.captured().updateOutcome(capturedId, MatchState.MATCHED, rule.id, outboxId, null)

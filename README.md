@@ -47,6 +47,11 @@ under 10 minutes old and accurate to 500 m. Android needs location set to *Allow
 the time*, because both the listener and the sender run in the background — the
 switch says so and links to the right screen. Off by default.
 
+Individual rules can opt out: a rule's **Location** setting can never attach a
+fix, or attach one unless a pattern matches the notification. Online purchases
+and subscription renewals arrive at home, so the phone's position says nothing
+about where the money went — and that is one position worth not recording.
+
 Each Inbox card also shows what cash-flow did with the transaction — *open in
 cash-flow*, *accepted*, *rejected* — with a button that jumps straight to
 `/pending` or, once accepted, to the entry in edit mode. *Check what cash-flow

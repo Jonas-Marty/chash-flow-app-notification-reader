@@ -1,5 +1,6 @@
 package ch.marty.finreader
 
+import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.data.db.Rule
 import ch.marty.finreader.data.db.TxTypeMode
 import ch.marty.finreader.domain.MatchOutcome
@@ -132,5 +133,61 @@ class RuleEngineTest {
         assertEquals(1180L, outcome.extraction.amountCents)
         assertEquals("CHF", outcome.extraction.currency)
         assertEquals("Original: € 12.50", outcome.extraction.note)
+    }
+
+    @Test
+    fun `a rule attaches the location unless it says otherwise`() {
+        val outcome = RuleEngine.evaluate(
+            input("Zahlung erfolgreich", "CHF 12.50 an Coop Luzern"),
+            listOf(rule()),
+        )
+        assertTrue((outcome as MatchOutcome.Matched).extraction.attachLocation)
+    }
+
+    @Test
+    fun `a rule set to never keeps the payment off the map`() {
+        val outcome = RuleEngine.evaluate(
+            input("Zahlung erfolgreich", "CHF 12.50 an Coop Luzern"),
+            listOf(rule { copy(locationMode = LocationMode.NEVER) }),
+        )
+        assertEquals(false, (outcome as MatchOutcome.Matched).extraction.attachLocation)
+    }
+
+    @Test
+    fun `the location pattern suppresses the fix only when it matches`() {
+        val located = rule {
+            copy(
+                locationMode = LocationMode.UNLESS_PATTERN,
+                locationExcludePattern = "online|Abo",
+            )
+        }
+        val inStore = RuleEngine.evaluate(
+            input("Zahlung erfolgreich", "CHF 12.50 an Coop Luzern"),
+            listOf(located),
+        )
+        val online = RuleEngine.evaluate(
+            input("Zahlung erfolgreich", "CHF 12.50 an Coop online Shop"),
+            listOf(located),
+        )
+        assertTrue((inStore as MatchOutcome.Matched).extraction.attachLocation)
+        assertEquals(false, (online as MatchOutcome.Matched).extraction.attachLocation)
+    }
+
+    @Test
+    fun `a missing or broken location pattern attaches nothing`() {
+        val blank = RuleEngine.evaluate(
+            input("Zahlung erfolgreich", "CHF 12.50 an Coop Luzern"),
+            listOf(rule { copy(locationMode = LocationMode.UNLESS_PATTERN) }),
+        )
+        val broken = RuleEngine.evaluate(
+            input("Zahlung erfolgreich", "CHF 12.50 an Coop Luzern"),
+            listOf(
+                rule {
+                    copy(locationMode = LocationMode.UNLESS_PATTERN, locationExcludePattern = "([")
+                },
+            ),
+        )
+        assertEquals(false, (blank as MatchOutcome.Matched).extraction.attachLocation)
+        assertEquals(false, (broken as MatchOutcome.Matched).extraction.attachLocation)
     }
 }
