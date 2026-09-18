@@ -7,6 +7,7 @@ import ch.marty.finreader.domain.MatchOutcome
 import ch.marty.finreader.domain.NotificationInput
 import ch.marty.finreader.domain.RuleEngine
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -98,6 +99,45 @@ class RuleEngineTest {
     }
 
     @Test
+    fun `each line of the skip field is its own pattern`() {
+        val skipping = rule {
+            copy(excludePattern = "Zahlungsanfrage\n  \nfordert \\d+ CHF von dir\nMigros")
+        }
+        val requested = RuleEngine.evaluate(
+            input("Twint", "Thomas fordert 12 CHF von dir"),
+            listOf(skipping),
+        )
+        assertEquals("Excluded by \"fordert \\d+ CHF von dir\"", (requested as MatchOutcome.Ignored).reason)
+
+        // A merchant handled by a recurring rule in the web app.
+        val recurring = RuleEngine.evaluate(input("Twint", "CHF 12.50 an Migros"), listOf(skipping))
+        assertTrue(recurring is MatchOutcome.Ignored)
+
+        // Everything else still matches: the blank line excludes nothing.
+        val normal = RuleEngine.evaluate(input("Twint", "CHF 12.50 an Coop Luzern"), listOf(skipping))
+        assertEquals("Coop Luzern", (normal as MatchOutcome.Matched).extraction.description)
+    }
+
+    @Test
+    fun `an unreadable skip line names itself`() {
+        val outcome = RuleEngine.evaluate(
+            input("Twint", "CHF 12.50 an Coop Luzern"),
+            listOf(rule { copy(excludePattern = "Zahlungsanfrage\n(unclosed") }),
+        )
+        assertEquals("Invalid exclude pattern \"(unclosed\"", (outcome as MatchOutcome.Failed).reason)
+    }
+
+    @Test
+    fun `a template that renders to nothing leaves the description empty`() {
+        val outcome = RuleEngine.evaluate(
+            input("Zahlung erfolgreich", "CHF 12.50 an Coop Luzern"),
+            listOf(rule { copy(descriptionTemplate = "{unknown}") }),
+        ) as MatchOutcome.Matched
+        assertNull(outcome.extraction.description)
+        assertEquals("Coop Luzern", outcome.extraction.merchant)
+    }
+
+    @Test
     fun `an invalid regex fails loudly instead of crashing`() {
         val outcome = RuleEngine.evaluate(input("x", "y"), listOf(rule(pattern = "(?<amount>[")))
         assertTrue(outcome is MatchOutcome.Failed)
@@ -133,6 +173,9 @@ class RuleEngineTest {
         assertEquals(1180L, outcome.extraction.amountCents)
         assertEquals("CHF", outcome.extraction.currency)
         assertEquals("Original: € 12.50", outcome.extraction.note)
+        // No merchant group, so {merchant} renders to nothing and the
+        // description stays empty rather than becoming "Revolut".
+        assertNull(outcome.extraction.description)
     }
 
     @Test

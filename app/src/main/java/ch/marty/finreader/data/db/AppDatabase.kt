@@ -15,8 +15,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OutboxItem::class,
         AccountCache::class,
         CategoryCache::class,
+        RecurringRuleCache::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -62,6 +63,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** A rule can fill in a bill on a recurring entry instead of posting. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE rule ADD COLUMN target TEXT NOT NULL DEFAULT 'PENDING_TRANSACTION'")
+                db.execSQL("ALTER TABLE rule ADD COLUMN recurringRuleId TEXT")
+                db.execSQL("ALTER TABLE rule ADD COLUMN recurringRuleName TEXT")
+                db.execSQL(
+                    "ALTER TABLE outbox_item ADD COLUMN target TEXT NOT NULL DEFAULT 'PENDING_TRANSACTION'",
+                )
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN recurringRuleName TEXT")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN recurringDueOn TEXT")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `recurring_rule_cache` (
+                        `id` TEXT NOT NULL, `name` TEXT NOT NULL,
+                        `acceptsProposals` INTEGER NOT NULL, `estimatedAmount` REAL,
+                        `nextDueOn` TEXT, `sortIndex` INTEGER NOT NULL, PRIMARY KEY(`id`))""",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -70,7 +91,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "finreader.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
         }
     }
 }

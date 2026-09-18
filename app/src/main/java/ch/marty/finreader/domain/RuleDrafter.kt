@@ -43,7 +43,10 @@ object RuleDrafter {
             textPattern = amountPart + merchantPart,
             sourceAccountId = accountId,
             externalSource = externalSource,
-            descriptionTemplate = if (hasMerchant) "{merchant}" else "{title}",
+            // Even without a merchant group this stays {merchant}: it then
+            // renders empty, which beats seeding the description with the
+            // notification title ("Zahlung erfolgreich").
+            descriptionTemplate = "{merchant}",
             noteTemplate = null,
         )
     }

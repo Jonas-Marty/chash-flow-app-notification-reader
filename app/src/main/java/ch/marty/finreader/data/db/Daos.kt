@@ -117,7 +117,7 @@ interface OutboxDao {
     @Query("SELECT COUNT(*) FROM outbox_item WHERE state IN ('QUEUED', 'FAILED_RETRY', 'SENDING', 'HELD')")
     fun countUnsent(): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM outbox_item WHERE state = 'FAILED_PERMANENT'")
+    @Query("SELECT COUNT(*) FROM outbox_item WHERE state IN ('FAILED_PERMANENT', 'REFUSED')")
     fun countFailed(): Flow<Int>
 
     /**
@@ -148,6 +148,16 @@ interface OutboxDao {
         remoteId: String?,
         now: Long = System.currentTimeMillis(),
     )
+
+    /** What the web app said about a bill: which entry it landed on, or why not. */
+    @Query(
+        """UPDATE outbox_item
+           SET recurringRuleName = COALESCE(:ruleName, recurringRuleName),
+               recurringDueOn = COALESCE(:dueOn, recurringDueOn),
+               confirmedTransactionId = COALESCE(:transactionId, confirmedTransactionId)
+           WHERE id = :id""",
+    )
+    suspend fun updateRecurringEntry(id: Long, ruleName: String?, dueOn: String?, transactionId: String?)
 
     @Query("UPDATE outbox_item SET state = :state, notBefore = :notBefore, updatedAt = :now WHERE id = :id")
     suspend fun updateState(
@@ -248,4 +258,19 @@ interface CacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCategories(items: List<CategoryCache>)
+
+    @Query("SELECT * FROM recurring_rule_cache ORDER BY sortIndex, name COLLATE NOCASE")
+    fun observeRecurringRules(): Flow<List<RecurringRuleCache>>
+
+    @Transaction
+    suspend fun replaceRecurringRules(items: List<RecurringRuleCache>) {
+        clearRecurringRules()
+        insertRecurringRules(items)
+    }
+
+    @Query("DELETE FROM recurring_rule_cache")
+    suspend fun clearRecurringRules()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRecurringRules(items: List<RecurringRuleCache>)
 }

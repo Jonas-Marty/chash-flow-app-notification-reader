@@ -32,7 +32,9 @@ import ch.marty.finreader.data.db.CategoryCache
 import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.data.db.MonitoredApp
 import ch.marty.finreader.data.db.NumberFormatStyle
+import ch.marty.finreader.data.db.RecurringRuleCache
 import ch.marty.finreader.data.db.Rule
+import ch.marty.finreader.data.db.RuleTarget
 import ch.marty.finreader.data.db.TxTypeMode
 import ch.marty.finreader.domain.AmountParser
 import ch.marty.finreader.domain.MatchOutcome
@@ -54,6 +56,7 @@ fun RuleEditorScreen(
 ) {
     val accounts by viewModel.accounts.collectAsState()
     val categories by viewModel.categories.collectAsState()
+    val recurringRules by viewModel.recurringRules.collectAsState()
     val monitoredApps by viewModel.monitoredApps.collectAsState()
 
     var rule by remember { mutableStateOf<Rule?>(null) }
@@ -106,6 +109,7 @@ fun RuleEditorScreen(
             onChange = { rule = it },
             accounts = accounts,
             categories = categories,
+            recurringRules = recurringRules,
             monitoredApps = monitoredApps,
             onDone = onDone,
         )
@@ -120,9 +124,11 @@ private fun RuleEditorContent(
     onChange: (Rule) -> Unit,
     accounts: List<AccountCache>,
     categories: List<CategoryCache>,
+    recurringRules: List<RecurringRuleCache>,
     monitoredApps: List<MonitoredApp>,
     onDone: () -> Unit,
 ) {
+    val isBill = current.target == RuleTarget.RECURRING_BILL
     var samples by remember { mutableStateOf<List<CapturedNotification>>(emptyList()) }
     var sampleIndex by remember { mutableStateOf(0) }
 
@@ -156,7 +162,7 @@ private fun RuleEditorContent(
                     enabled = current.name.isNotBlank() &&
                         current.packageName.isNotBlank() &&
                         current.textPattern.isNotBlank() &&
-                        current.sourceAccountId.isNotBlank(),
+                        if (isBill) !current.recurringRuleId.isNullOrBlank() else current.sourceAccountId.isNotBlank(),
                     onClick = {
                         viewModel.saveRule(current)
                         onDone()
@@ -169,40 +175,57 @@ private fun RuleEditorContent(
 
         AppPicker(current, monitoredApps, onChange)
 
-        Field(
-            "Source badge (external_source)",
-            current.externalSource,
-            help = "Shown as a badge next to the pending transaction in the web app.",
-        ) { onChange(current.copy(externalSource = it)) }
-
         LabeledDropdown(
-            label = "Account",
-            options = accounts,
-            selected = accounts.firstOrNull { it.id == current.sourceAccountId },
-            optionLabel = { accountLabel(it) },
-            onSelect = {
-                onChange(current.copy(
-                    sourceAccountId = it.id,
-                    sourceAccountName = it.name,
-                    sourceAccountCurrency = it.currencyCode,
-                ))
+            label = "Creates",
+            options = RuleTarget.entries,
+            selected = current.target,
+            optionLabel = {
+                when (it) {
+                    RuleTarget.PENDING_TRANSACTION -> "Pending transaction"
+                    RuleTarget.RECURRING_BILL -> "Bill for a recurring entry"
+                }
             },
+            onSelect = { onChange(current.copy(target = it)) },
         )
-        if (accounts.isEmpty()) {
-            Text(
-                "No accounts loaded yet — press \"Refresh accounts & categories\" in Settings.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+
+        if (isBill) {
+            RecurringRulePicker(current, recurringRules, onChange, onRefresh = { viewModel.syncRecurringRules() })
+        } else {
+            Field(
+                "Source badge (external_source)",
+                current.externalSource,
+                help = "Shown as a badge next to the pending transaction in the web app.",
+            ) { onChange(current.copy(externalSource = it)) }
+
+            LabeledDropdown(
+                label = "Account",
+                options = accounts,
+                selected = accounts.firstOrNull { it.id == current.sourceAccountId },
+                optionLabel = { accountLabel(it) },
+                onSelect = {
+                    onChange(current.copy(
+                        sourceAccountId = it.id,
+                        sourceAccountName = it.name,
+                        sourceAccountCurrency = it.currencyCode,
+                    ))
+                },
+            )
+            if (accounts.isEmpty()) {
+                Text(
+                    "No accounts loaded yet — press \"Refresh accounts & categories\" in Settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            LabeledDropdown(
+                label = "Category (optional)",
+                options = listOf<CategoryCache?>(null) + categories,
+                selected = categories.firstOrNull { it.id == current.categoryId },
+                optionLabel = { it?.let { c -> c.groupName?.let { g -> "$g · ${c.name}" } ?: c.name } ?: "— none —" },
+                onSelect = { onChange(current.copy(categoryId = it?.id, categoryName = it?.name)) },
             )
         }
-
-        LabeledDropdown(
-            label = "Category (optional)",
-            options = listOf<CategoryCache?>(null) + categories,
-            selected = categories.firstOrNull { it.id == current.categoryId },
-            optionLabel = { it?.let { c -> c.groupName?.let { g -> "$g · ${c.name}" } ?: c.name } ?: "— none —" },
-            onSelect = { onChange(current.copy(categoryId = it?.id, categoryName = it?.name)) },
-        )
 
         HorizontalDivider()
 
@@ -220,10 +243,11 @@ private fun RuleEditorContent(
         ) { onChange(current.copy(titlePattern = it.ifBlank { null })) }
 
         Field(
-            "Skip if this matches (optional)",
+            "Skip if any of these matches (optional)",
             current.excludePattern.orEmpty(),
             monospace = true,
-            help = "e.g. a payment request rather than a completed payment.",
+            help = "One regex per line, e.g. fordert Geld von dir on one line " +
+                "and a merchant handled by a recurring rule on the next.",
         ) { onChange(current.copy(excludePattern = it.ifBlank { null })) }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -280,69 +304,9 @@ private fun RuleEditorContent(
             onSelect = { onChange(current.copy(numberFormat = it)) },
         )
 
-        LabeledDropdown(
-            label = "Direction",
-            options = TxTypeMode.entries,
-            selected = current.txTypeMode,
-            optionLabel = {
-                when (it) {
-                    TxTypeMode.EXPENSE -> "Always expense"
-                    TxTypeMode.INCOME -> "Always income"
-                    TxTypeMode.FROM_PATTERN -> "Income when a pattern matches"
-                }
-            },
-            onSelect = { onChange(current.copy(txTypeMode = it)) },
-        )
-
-        if (current.txTypeMode == TxTypeMode.FROM_PATTERN) {
-            Field(
-                "Income pattern",
-                current.incomePattern.orEmpty(),
-                monospace = true,
-                help = "e.g. erhalten|Gutschrift|received",
-            ) { onChange(current.copy(incomePattern = it.ifBlank { null })) }
-        }
-
-        Field(
-            "Description template",
-            current.descriptionTemplate,
-            help = "e.g. {merchant} — placeholders are filled from the groups above.",
-        ) { onChange(current.copy(descriptionTemplate = it)) }
-
-        Field(
-            "Note template (optional)",
-            current.noteTemplate.orEmpty(),
-            help = "Tags and a second currency, e.g. #{merchant:d} or Original: {origCurrency} {origAmount}",
-        ) { onChange(current.copy(noteTemplate = it.ifBlank { null })) }
-
-        LabeledDropdown(
-            label = "Location",
-            options = LocationMode.entries,
-            selected = current.locationMode,
-            optionLabel = {
-                when (it) {
-                    LocationMode.ATTACH -> "Attach where the phone is"
-                    LocationMode.NEVER -> "Never attach a location"
-                    LocationMode.UNLESS_PATTERN -> "Attach unless a pattern matches"
-                }
-            },
-            onSelect = { onChange(current.copy(locationMode = it)) },
-        )
-        Text(
-            "Only applies when Settings → Location is on. An online payment happens " +
-                "wherever the phone is, so those are worth keeping off the map.",
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(start = 4.dp),
-        )
-
-        if (current.locationMode == LocationMode.UNLESS_PATTERN) {
-            Field(
-                "No location when this matches",
-                current.locationExcludePattern.orEmpty(),
-                monospace = true,
-                help = "e.g. online|Abo|subscription — an empty or broken pattern attaches nothing.",
-            ) { onChange(current.copy(locationExcludePattern = it.ifBlank { null })) }
-        }
+        // A bill only proposes an amount and a date; direction, texts and
+        // location all come from the recurring rule in the web app.
+        if (!isBill) BookingFields(current, onChange)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -382,9 +346,171 @@ private fun RuleEditorContent(
                     )
                 }
             }
-            PreviewResult(outcome, accounts.firstOrNull { it.id == current.sourceAccountId })
+            if (isBill) {
+                BillPreview(outcome, recurringRules.firstOrNull { it.id == current.recurringRuleId }, current)
+            } else {
+                PreviewResult(outcome, accounts.firstOrNull { it.id == current.sourceAccountId })
+            }
         }
     }
+}
+
+/** What a pending transaction is booked as; irrelevant to a bill. */
+@Composable
+private fun BookingFields(current: Rule, onChange: (Rule) -> Unit) {
+    LabeledDropdown(
+        label = "Direction",
+        options = TxTypeMode.entries,
+        selected = current.txTypeMode,
+        optionLabel = {
+            when (it) {
+                TxTypeMode.EXPENSE -> "Always expense"
+                TxTypeMode.INCOME -> "Always income"
+                TxTypeMode.FROM_PATTERN -> "Income when a pattern matches"
+            }
+        },
+        onSelect = { onChange(current.copy(txTypeMode = it)) },
+    )
+
+    if (current.txTypeMode == TxTypeMode.FROM_PATTERN) {
+        Field(
+            "Income pattern",
+            current.incomePattern.orEmpty(),
+            monospace = true,
+            help = "e.g. erhalten|Gutschrift|received",
+        ) { onChange(current.copy(incomePattern = it.ifBlank { null })) }
+    }
+
+    Field(
+        "Description template",
+        current.descriptionTemplate,
+        help = "e.g. {merchant} — filled from the groups above; renders empty → no description.",
+    ) { onChange(current.copy(descriptionTemplate = it)) }
+
+    Field(
+        "Note template (optional)",
+        current.noteTemplate.orEmpty(),
+        help = "Tags and a second currency, e.g. #{merchant:d} or Original: {origCurrency} {origAmount}",
+    ) { onChange(current.copy(noteTemplate = it.ifBlank { null })) }
+
+    LabeledDropdown(
+        label = "Location",
+        options = LocationMode.entries,
+        selected = current.locationMode,
+        optionLabel = {
+            when (it) {
+                LocationMode.ATTACH -> "Attach where the phone is"
+                LocationMode.NEVER -> "Never attach a location"
+                LocationMode.UNLESS_PATTERN -> "Attach unless a pattern matches"
+            }
+        },
+        onSelect = { onChange(current.copy(locationMode = it)) },
+    )
+    Text(
+        "Only applies when Settings → Location is on. An online payment happens " +
+            "wherever the phone is, so those are worth keeping off the map.",
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.padding(start = 4.dp),
+    )
+
+    if (current.locationMode == LocationMode.UNLESS_PATTERN) {
+        Field(
+            "No location when this matches",
+            current.locationExcludePattern.orEmpty(),
+            monospace = true,
+            help = "e.g. online|Abo|subscription — an empty or broken pattern attaches nothing.",
+        ) { onChange(current.copy(locationExcludePattern = it.ifBlank { null })) }
+    }
+}
+
+/**
+ * The recurring rules a bill may fill in, by their name in cash-flow. Only
+ * variable-amount rules take a bill; a rule picked earlier that has since got a
+ * fixed amount stays visible, flagged, so editing does not silently drop it.
+ */
+@Composable
+private fun RecurringRulePicker(
+    current: Rule,
+    recurringRules: List<RecurringRuleCache>,
+    onChange: (Rule) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    val options = recurringRules.filter { it.acceptsProposals || it.id == current.recurringRuleId }
+    val selected = options.firstOrNull { it.id == current.recurringRuleId }
+    LabeledDropdown(
+        label = "Recurring rule",
+        options = options,
+        selected = selected,
+        optionLabel = { rule ->
+            rule.name +
+                (rule.nextDueOn?.let { " · next ${shortDate(it)}" } ?: "") +
+                (if (rule.acceptsProposals) "" else " (fixed amount — refused)")
+        },
+        onSelect = { onChange(current.copy(recurringRuleId = it.id, recurringRuleName = it.name)) },
+    )
+    when {
+        options.isEmpty() -> Text(
+            if (recurringRules.isEmpty()) {
+                "No recurring rules loaded yet."
+            } else {
+                "None of the recurring rules in cash-flow has a variable amount — only those take a bill."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        selected == null && !current.recurringRuleId.isNullOrBlank() -> Text(
+            "The rule picked before (${current.recurringRuleName ?: current.recurringRuleId}) " +
+                "is no longer in cash-flow — pick another.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        selected?.acceptsProposals == false -> Text(
+            "${selected.name} has a fixed amount now; cash-flow will refuse bills for it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+    Text(
+        "The bill's amount and the notification's date are proposed for the rule's next entry. " +
+            "Nothing is booked — you post it in cash-flow. A bill for an entry that is " +
+            "already posted is refused.",
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.padding(start = 4.dp),
+    )
+    TextButton(onClick = onRefresh) { Text("Refresh recurring rules") }
+}
+
+@Composable
+private fun BillPreview(outcome: MatchOutcome?, target: RecurringRuleCache?, rule: Rule) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            when (outcome) {
+                is MatchOutcome.Matched -> {
+                    val e = outcome.extraction
+                    Text("Would propose:", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        buildString {
+                            appendLine("amount:      ${AmountParser.centsToPlainString(e.amountCents)} (${e.currency})")
+                            appendLine("date:        ${e.occurredOn}")
+                            append("for:         ${target?.name ?: rule.recurringRuleName ?: "—"}")
+                            target?.estimatedAmount?.let { append("\nestimate:    $it") }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+
+                else -> PreviewResult(outcome, null)
+            }
+        }
+    }
+}
+
+private fun shortDate(isoDate: String): String {
+    val parts = isoDate.split("-")
+    return if (parts.size == 3) "${parts[2]}.${parts[1]}." else isoDate
 }
 
 @Composable
@@ -414,7 +540,7 @@ private fun PreviewResult(outcome: MatchOutcome?, account: AccountCache?) {
                             appendLine("amount:      ${AmountParser.centsToPlainString(e.amountCents)} (${e.currency})")
                             appendLine("type:        ${e.type}")
                             appendLine("date:        ${e.occurredOn}")
-                            appendLine("description: ${e.description}")
+                            appendLine("description: ${e.description ?: "—"}")
                             e.note?.let { appendLine("note:        $it") }
                             appendLine("account:     ${account?.let { accountLabel(it) } ?: "—"}")
                             append("location:    ${if (e.attachLocation) "attached" else "not sent"}")

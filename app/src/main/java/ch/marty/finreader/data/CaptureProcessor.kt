@@ -1,12 +1,15 @@
 package ch.marty.finreader.data
 
 import android.content.Context
+import ch.marty.finreader.data.api.FinanceApi
 import ch.marty.finreader.data.api.PendingTransactionPayload
+import ch.marty.finreader.data.api.RecurringProposalPayload
 import ch.marty.finreader.data.db.AppDatabase
 import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.MatchState
 import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.OutboxState
+import ch.marty.finreader.data.db.RuleTarget
 import ch.marty.finreader.data.prefs.SettingsStore
 import ch.marty.finreader.domain.AmountParser
 import ch.marty.finreader.domain.ExternalRef
@@ -116,18 +119,37 @@ class CaptureProcessor(
             return
         }
 
-        val payload = PendingTransactionPayload(
-            sourceAccountId = rule.sourceAccountId,
-            amount = AmountParser.centsToPlainString(extraction.amountCents),
-            type = extraction.type,
-            occurredOn = extraction.occurredOn,
-            categoryId = rule.categoryId,
-            description = extraction.description,
-            note = buildNote(extraction.note, extraction.currency, rule.sourceAccountCurrency),
-            externalSource = rule.externalSource.take(120),
-            externalRef = ExternalRef.withSequence(base, siblings.size),
-            externalInfo = input.haystack.take(2000),
-        )
+        val externalRef = ExternalRef.withSequence(base, siblings.size)
+        val isBill = rule.target == RuleTarget.RECURRING_BILL
+        val payloadJson = if (isBill) {
+            // Only the amount and the date travel: the recurring rule in the web
+            // app already knows the account, category and description.
+            json.encodeToString(
+                RecurringProposalPayload(
+                    recurringRuleId = rule.recurringRuleId.orEmpty(),
+                    amount = AmountParser.centsToPlainString(extraction.amountCents),
+                    occurredOn = extraction.occurredOn,
+                    externalSource = FinanceApi.PROPOSAL_SOURCE,
+                    externalRef = externalRef,
+                    externalInfo = input.haystack.take(2000),
+                ),
+            )
+        } else {
+            json.encodeToString(
+                PendingTransactionPayload(
+                    sourceAccountId = rule.sourceAccountId,
+                    amount = AmountParser.centsToPlainString(extraction.amountCents),
+                    type = extraction.type,
+                    occurredOn = extraction.occurredOn,
+                    categoryId = rule.categoryId,
+                    description = extraction.description,
+                    note = buildNote(extraction.note, extraction.currency, rule.sourceAccountCurrency),
+                    externalSource = rule.externalSource.take(120),
+                    externalRef = externalRef,
+                    externalInfo = input.haystack.take(2000),
+                ),
+            )
+        }
 
         val holdForTap = !config.autoPostEnabled || !rule.autoPost
         val undoWindow = if (holdForTap) 0L else config.undoWindowMillis
@@ -140,9 +162,11 @@ class CaptureProcessor(
         val item = OutboxItem(
             capturedId = capturedId,
             ruleId = rule.id,
-            externalRef = payload.externalRef.orEmpty(),
+            externalRef = externalRef,
             externalRefBase = base,
-            payloadJson = json.encodeToString(payload),
+            payloadJson = payloadJson,
+            target = rule.target,
+            recurringRuleName = if (isBill) rule.recurringRuleName else null,
             amountCents = extraction.amountCents,
             currency = extraction.currency,
             description = extraction.description,
@@ -162,7 +186,7 @@ class CaptureProcessor(
                 outboxId = outboxId,
                 amount = AmountParser.centsToPlainString(extraction.amountCents),
                 currency = extraction.currency,
-                description = extraction.description,
+                description = if (isBill) billLabel(rule.recurringRuleName) else extraction.description,
                 held = holdForTap,
                 undoable = !holdForTap && undoWindow > 0,
             )
@@ -170,6 +194,8 @@ class CaptureProcessor(
 
         if (!holdForTap) SyncScheduler.kickOutbox(context, undoWindow)
     }
+
+    private fun billLabel(ruleName: String?): String = "Bill for ${ruleName ?: "a recurring entry"}"
 
     /** A currency the target account does not use is worth recording in the note. */
     private fun buildNote(note: String?, currency: String, accountCurrency: String?): String? {

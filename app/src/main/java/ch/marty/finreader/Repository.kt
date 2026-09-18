@@ -15,6 +15,9 @@ import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.CategoryCache
 import ch.marty.finreader.data.api.PendingTransactionDto
 import ch.marty.finreader.data.api.PendingTransactionPayload
+import ch.marty.finreader.data.api.RecurringProposalDto
+import ch.marty.finreader.data.db.RecurringRuleCache
+import ch.marty.finreader.data.db.RuleTarget
 import ch.marty.finreader.data.db.MatchState
 import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.ServerStatus
@@ -68,6 +71,7 @@ class Repository(
     fun observeMonitoredApps() = db.monitoredApps().observeAll()
     fun observeAccounts() = db.cache().observeAccounts()
     fun observeCategories() = db.cache().observeCategories()
+    fun observeRecurringRules() = db.cache().observeRecurringRules()
     fun observeOutbox() = db.outbox().observeRecent()
     fun observeUnsentCount() = db.outbox().countUnsent()
     fun observeFailedCount() = db.outbox().countFailed()
@@ -160,8 +164,9 @@ class Repository(
         if (item.state == OutboxState.SENDING) {
             return RerunResult.Refused("It is being sent right now — try again in a moment")
         }
+        val isBill = item.target == RuleTarget.RECURRING_BILL
         if (item.serverStatus == ServerStatus.CONFIRMED) {
-            return RerunResult.Refused(ALREADY_ACCEPTED)
+            return RerunResult.Refused(if (isBill) ALREADY_POSTED else ALREADY_ACCEPTED)
         }
 
         // Anything that reached the server holds the (source, ref) pair the
@@ -169,7 +174,32 @@ class Repository(
         val reachedServer = item.remotePendingId != null ||
             item.state == OutboxState.POSTED ||
             item.state == OutboxState.DEDUPED
-        if (reachedServer) {
+        if (reachedServer && isBill) {
+            when (val deleted = api.deleteProposal(item.externalRef)) {
+                is ApiResult.Ok -> Unit
+
+                is ApiResult.ClientError -> {
+                    // Posted in the web app between the last status check and now.
+                    if (deleted.code == 409) {
+                        db.outbox().updateServerStatus(
+                            id = item.id,
+                            status = ServerStatus.CONFIRMED,
+                            transactionId = item.confirmedTransactionId,
+                            rejectReason = null,
+                            remoteId = null,
+                        )
+                        return RerunResult.Refused(ALREADY_POSTED)
+                    }
+                    return RerunResult.Refused(describeDeleteFailure(deleted.message))
+                }
+
+                is ApiResult.ServerError ->
+                    return RerunResult.Refused(describeDeleteFailure(deleted.message))
+
+                is ApiResult.NetworkError ->
+                    return RerunResult.Refused("No connection: ${deleted.message}")
+            }
+        } else if (reachedServer) {
             val source = runCatching {
                 json.decodeFromString<PendingTransactionPayload>(item.payloadJson).externalSource
             }.getOrNull()
@@ -211,7 +241,55 @@ class Repository(
      * were checked.
      */
     suspend fun refreshServerStatus(): ApiResult<Int> {
-        val posted = db.outbox().postedItems()
+        val (bills, posted) = db.outbox().postedItems().partition { it.target == RuleTarget.RECURRING_BILL }
+        val pendingResult = refreshPendingStatus(posted)
+        val billResult = refreshBillStatus(bills)
+        return when {
+            pendingResult !is ApiResult.Ok -> pendingResult
+            billResult !is ApiResult.Ok -> billResult
+            else -> ApiResult.Ok(pendingResult.value + billResult.value)
+        }
+    }
+
+    /**
+     * Bills sit on a recurring entry, not on `/pending`: still waiting there,
+     * posted, skipped — or gone, when a newer bill replaced this one or the
+     * user discarded it.
+     */
+    private suspend fun refreshBillStatus(bills: List<OutboxItem>): ApiResult<Int> {
+        if (bills.isEmpty()) return ApiResult.Ok(0)
+        return when (val remote = api.fetchProposalsByRefs(bills.map { it.externalRef })) {
+            is ApiResult.Ok -> {
+                val byRef = remote.value.associateBy { it.externalRef }
+                bills.forEach { item ->
+                    val row = byRef[item.externalRef]
+                    db.outbox().updateServerStatus(
+                        id = item.id,
+                        status = billStatusOf(row),
+                        transactionId = row?.transactionId,
+                        rejectReason = null,
+                        remoteId = row?.occurrenceId,
+                    )
+                    if (row != null) db.outbox().updateRecurringEntry(item.id, row.ruleName, row.effectiveOn, null)
+                }
+                ApiResult.Ok(bills.size)
+            }
+
+            is ApiResult.ClientError -> remote
+            is ApiResult.ServerError -> remote
+            is ApiResult.NetworkError -> remote
+        }
+    }
+
+    private fun billStatusOf(row: RecurringProposalDto?): ServerStatus? = when (row?.status) {
+        "pending" -> ServerStatus.PENDING
+        "posted" -> ServerStatus.CONFIRMED
+        "skipped" -> ServerStatus.REJECTED
+        null -> ServerStatus.GONE
+        else -> null
+    }
+
+    private suspend fun refreshPendingStatus(posted: List<OutboxItem>): ApiResult<Int> {
         if (posted.isEmpty()) return ApiResult.Ok(0)
 
         return when (val remote = api.fetchPendingByRefs(posted.map { it.externalRef })) {
@@ -253,6 +331,11 @@ class Repository(
     /** Deep link into the web app for a posted item. */
     fun webLinkFor(item: OutboxItem): String? {
         val base = settings.current().baseUrl.trimEnd('/').takeIf { it.isNotBlank() } ?: return null
+        if (item.target == RuleTarget.RECURRING_BILL) {
+            // A posted entry — or, for a refused late bill, the one posted before
+            // it arrived — opens in edit mode; a waiting one is on the dashboard.
+            return item.confirmedTransactionId?.let { "$base/edit/$it" } ?: "$base/"
+        }
         return when (item.serverStatus) {
             ServerStatus.CONFIRMED ->
                 item.confirmedTransactionId?.let { "$base/edit/$it" } ?: "$base/pending"
@@ -271,6 +354,32 @@ class Repository(
     suspend fun cancel(outboxId: Long) = db.outbox().updateState(outboxId, OutboxState.CANCELLED)
 
     suspend fun testConnection(): ApiResult<Int> = api.fetchPendingCount()
+
+    /**
+     * Refreshes the recurring-rule picker. Kept apart from accounts and
+     * categories so a web app that predates the endpoint still syncs the rest.
+     */
+    suspend fun syncRecurringRules(): ApiResult<Int> = when (val rules = api.fetchRecurringRules()) {
+        is ApiResult.Ok -> {
+            db.cache().replaceRecurringRules(
+                rules.value.mapIndexed { index, dto ->
+                    RecurringRuleCache(
+                        id = dto.id,
+                        name = dto.name,
+                        acceptsProposals = dto.acceptsProposals ?: dto.isVariableAmount,
+                        estimatedAmount = dto.estimatedAmount,
+                        nextDueOn = dto.nextPendingOccurrence?.effectiveOn,
+                        sortIndex = index,
+                    )
+                },
+            )
+            ApiResult.Ok(rules.value.size)
+        }
+
+        is ApiResult.ClientError -> rules
+        is ApiResult.ServerError -> rules
+        is ApiResult.NetworkError -> rules
+    }
 
     /** Refreshes the account and category pickers from the web app. */
     suspend fun syncCatalog(): ApiResult<Int> {
@@ -355,5 +464,7 @@ class Repository(
         const val HTML_ONLY = "Only HTML requests are supported"
         const val ALREADY_ACCEPTED =
             "Already accepted in cash-flow — undo it there first if you want to re-run the rules"
+        const val ALREADY_POSTED =
+            "Already posted in cash-flow — open the entry and edit it there"
     }
 }

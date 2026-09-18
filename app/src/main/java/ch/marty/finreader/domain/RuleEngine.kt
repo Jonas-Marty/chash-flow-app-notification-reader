@@ -3,6 +3,7 @@ package ch.marty.finreader.domain
 import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.data.db.NumberFormatStyle
 import ch.marty.finreader.data.db.Rule
+import ch.marty.finreader.data.db.RuleTarget
 import ch.marty.finreader.data.db.TxTypeMode
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -30,7 +31,8 @@ data class Extraction(
     val currency: String,
     val merchant: String?,
     val type: String,
-    val description: String,
+    /** Empty when the rule's template renders to nothing; never guessed at. */
+    val description: String?,
     val note: String?,
     val occurredOn: String,
     /** Whether this payment may carry the phone's location, see [Rule.locationMode]. */
@@ -73,8 +75,9 @@ object RuleEngine {
             if (!regex.containsMatchIn(input.title.orEmpty())) return MatchOutcome.NoMatch
         }
 
-        rule.excludePattern?.takeIf { it.isNotBlank() }?.let { pattern ->
-            val regex = compile(pattern) ?: return MatchOutcome.Failed(rule, "Invalid exclude pattern")
+        for (pattern in patternLines(rule.excludePattern)) {
+            val regex = compile(pattern)
+                ?: return MatchOutcome.Failed(rule, "Invalid exclude pattern \"$pattern\"")
             if (regex.containsMatchIn(haystack)) {
                 return MatchOutcome.Ignored(rule, "Excluded by \"$pattern\"")
             }
@@ -83,6 +86,10 @@ object RuleEngine {
         val textRegex = compile(rule.textPattern)
             ?: return MatchOutcome.Failed(rule, "Invalid text pattern")
         val match = textRegex.find(haystack) ?: return MatchOutcome.NoMatch
+
+        if (rule.target == RuleTarget.RECURRING_BILL && rule.recurringRuleId.isNullOrBlank()) {
+            return MatchOutcome.Failed(rule, "No recurring rule picked for this bill")
+        }
 
         val amountRaw = match.namedGroup(rule.amountGroup)
             ?: return MatchOutcome.Failed(rule, "Pattern has no group \"${rule.amountGroup}\"")
@@ -112,7 +119,9 @@ object RuleEngine {
             }
         }
 
-        val attachLocation = when (rule.locationMode) {
+        // A bill arrives wherever the phone is, which says nothing about the
+        // payment — and a proposal has nowhere to put a location anyway.
+        val attachLocation = if (rule.target == RuleTarget.RECURRING_BILL) false else when (rule.locationMode) {
             LocationMode.ATTACH -> true
             LocationMode.NEVER -> false
             // A pattern that is missing or does not compile suppresses the fix
@@ -142,9 +151,13 @@ object RuleEngine {
             }
         }
 
+        // A template that renders to nothing leaves the description empty.
+        // The notification says where a payment happened and what it cost, not
+        // what was bought, so a merchant or rule name substituted in here would
+        // read like a description someone actually wrote.
         val description = Template.render(rule.descriptionTemplate, values)
-            .ifBlank { merchant ?: rule.name }
-            .take(MAX_DESCRIPTION)
+            .takeIf { it.isNotBlank() }
+            ?.take(MAX_DESCRIPTION)
         val note = rule.noteTemplate
             ?.takeIf { it.isNotBlank() }
             ?.let { Template.render(it, values) }
@@ -166,6 +179,19 @@ object RuleEngine {
             ),
         )
     }
+
+    /**
+     * A pattern field holds one regex per line, so a rule can list the
+     * merchants it does not want without folding them into one alternation
+     * where a stray `|` silently excludes everything. Blank lines are dropped
+     * for the same reason: an empty regex matches every notification.
+     */
+    fun patternLines(field: String?): List<String> = field
+        ?.lineSequence()
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.toList()
+        .orEmpty()
 
     fun compile(pattern: String): Regex? = runCatching {
         Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))

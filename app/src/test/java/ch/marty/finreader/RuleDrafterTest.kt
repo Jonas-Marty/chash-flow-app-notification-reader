@@ -7,6 +7,7 @@ import ch.marty.finreader.domain.RuleEngine
 import ch.marty.finreader.domain.Template
 import ch.marty.finreader.domain.toInput
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -66,6 +67,8 @@ class RuleDrafterTest {
         val outcome = RuleEngine.apply(rule, terse.toInput())
         assertTrue("$outcome", outcome is MatchOutcome.Matched)
         assertEquals(4200L, (outcome as MatchOutcome.Matched).extraction.amountCents)
+        // Nothing here says who was paid, so nothing is put in the description.
+        assertNull(outcome.extraction.description)
     }
 
     @Test

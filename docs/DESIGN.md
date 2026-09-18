@@ -21,6 +21,10 @@ Settings → API Tokens (hashed into `api_tokens`, revocable).
 | GET  | `/api/public/accounts` | Populate account picker in rule editor |
 | GET  | `/api/public/categories` | Populate optional category picker |
 | DELETE | `/api/public/pending-transactions` | Withdraw a pending row before a re-run (409 once confirmed) |
+| GET  | `/api/public/recurring-rules` | Populate the recurring-rule picker for bill rules |
+| POST | `/api/public/recurring-proposals` | Propose a bill's amount and date for a recurring entry (§4) |
+| GET  | `/api/public/recurring-proposals?external_ref=…` | What became of the bills sent |
+| DELETE | `/api/public/recurring-proposals` | Withdraw a bill before a re-run (409 once posted) |
 
 ### POST payload
 
@@ -90,7 +94,7 @@ id, name, enabled, priority            // lower priority evaluated first
 packageName                            // which app this rule applies to
 titlePattern: String?                  // optional regex on the title
 textPattern: String                    // regex with named groups over "title \n text"
-excludePattern: String?                // if it matches → ignore the notification
+excludePattern: String?                // one regex per line; any line matching → ignore
 amountGroup   = "amount"               // named group names
 merchantGroup = "merchant"
 currencyGroup = "currency"
@@ -100,25 +104,31 @@ txType: EXPENSE | INCOME | FROM_PATTERN
 incomePattern: String?                 // FROM_PATTERN: matches → income, else expense
 locationMode = ATTACH                  // ATTACH | NEVER | UNLESS_PATTERN
 locationExcludePattern: String?        // UNLESS_PATTERN: matches → no location
-sourceAccountId                        // uuid from /api/public/accounts
+target = PENDING_TRANSACTION           // PENDING_TRANSACTION | RECURRING_BILL (§4 "Bills")
+recurringRuleId, recurringRuleName     // RECURRING_BILL: the rule in /api/public/recurring-rules
+sourceAccountId                        // uuid from /api/public/accounts (pending only)
 categoryId: String?                    // optional default
 descriptionTemplate = "{merchant}"     // {merchant} {amount} {currency} {title} {text}
+                                       // renders empty → description left empty, never guessed
 noteTemplate: String?
 autoPost = true                        // false → capture only, post via manual tap
 ```
 
 **`outbox_item`** — `id`, `capturedId`, `ruleId`, `payloadJson`, `externalRef`,
-`state` (QUEUED | SENDING | POSTED | DEDUPED | FAILED_RETRY | FAILED_PERMANENT),
-`attempts`, `lastError`, `remotePendingId`, `serverStatus`, `latitude`,
-`longitude`, `locationAccuracyM`, `locationAt`, `attachLocation`, timestamps.
+`state` (QUEUED | HELD | SENDING | POSTED | DEDUPED | FAILED_RETRY | FAILED_PERMANENT
+| CANCELLED | REFUSED), `attempts`, `lastError`, `remotePendingId` (the occurrence
+id for a bill), `target`, `recurringRuleName`, `recurringDueOn`, `serverStatus`,
+`latitude`, `longitude`, `locationAccuracyM`, `locationAt`, `attachLocation`, timestamps.
 The location lives in columns rather than inside `payloadJson` because it is the
 one field that keeps improving until the moment the item is posted.
 `attachLocation` carries the rule's verdict (below) forward, so the worker's
 refinement pass cannot put a place on a payment that was meant to travel
 without one — by then the rule may have been edited or deleted.
 
-**`account_cache` / `category_cache`** — mirrors of the two GET endpoints so the
-rule editor works offline. Refreshed on demand and at most hourly on app open.
+**`account_cache` / `category_cache` / `recurring_rule_cache`** — mirrors of the
+GET endpoints so the rule editor works offline. Refreshed on demand. The
+recurring rules are fetched separately, so a web app that predates that endpoint
+still refreshes accounts and categories.
 
 Settings (EncryptedSharedPreferences): `baseUrl`, `apiToken`, `autoPostEnabled`,
 `feedbackNotificationsEnabled`, `retentionDays`, `captureLocation`.
@@ -258,6 +268,40 @@ Two details keep it honest:
 
 Each card links into the web app: `/edit/<confirmed_transaction_id>` once
 accepted, `/pending` otherwise.
+
+### Bills for a recurring entry
+
+Some notifications announce a bill rather than a payment — "Your new bill for
+September 2026 amounting to CHF 2'691.72 is now available." cash-flow already
+knows that bill as a recurring rule with a variable amount; what it lacks is the
+figure. A rule with `target = RECURRING_BILL` supplies it instead of creating a
+pending transaction:
+
+- **Only amount and date travel.** `POST /api/public/recurring-proposals` gets
+  `recurring_rule_id`, the amount, `occurred_on` = the notification's date, the
+  usual `external_ref` and the raw text. Account, category and description are
+  the recurring rule's. `external_source` is always `FinReader`, which is what the
+  web app shows the user as the provider.
+- **Nothing is booked.** cash-flow pre-fills the entry on its dashboard and in the
+  post dialog, says the numbers came from FinReader, and the user posts it.
+- **Picked by name.** The editor's dropdown lists the rules from
+  `/api/public/recurring-rules` that accept a bill (`accepts_proposals`, i.e.
+  variable amount). A rule that later gets a fixed amount stays shown, flagged.
+- **Which entry** is cash-flow's decision: the first one scheduled no more than
+  7 days before the bill and at most one interval after. The answer carries the
+  entry's date, shown on the Inbox card as `bill → Swisscom · 30.09.`.
+- **A late bill is refused, not moved.** When that entry is already posted,
+  cash-flow answers 409 `already_posted` with the transaction's id. The item
+  becomes `REFUSED` — not `FAILED_PERMANENT`, since sending again cannot help —
+  and the card offers *Open entry to edit*, straight to `/edit/<id>`, where the
+  amount is corrected by hand. Skipped entries are refused the same way.
+- **Never a location.** A bill arrives wherever the phone is; `RuleEngine`
+  forces `attachLocation = false` for this target whatever the rule says.
+- **Status and re-run** mirror pending transactions: `waiting to be posted`,
+  `posted` (terminal, links to the entry), `skipped in cash-flow`, and
+  `replaced or discarded` when a newer bill took the entry or the user dropped
+  the suggestion. *Run rules again* withdraws the proposal by ref — never by
+  occurrence, where a newer bill may sit by now — and is refused once posted.
 
 ### Placeholder modifiers
 

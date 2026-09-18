@@ -52,6 +52,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val categories = repo.observeCategories()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val recurringRules = repo.observeRecurringRules()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val unsentCount = repo.observeUnsentCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
@@ -148,12 +151,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun syncCatalog() = viewModelScope.launch {
         _busy.value = true
         _message.value = when (val result = repo.syncCatalog()) {
-            is ApiResult.Ok -> "Loaded ${result.value} account(s) and the category list"
+            is ApiResult.Ok -> "Loaded ${result.value} account(s) and the category list" +
+                describeRecurringSync(repo.syncRecurringRules())
+
             is ApiResult.ClientError -> "Failed: ${result.message}"
             is ApiResult.ServerError -> "Server error: ${result.message}"
             is ApiResult.NetworkError -> "No connection: ${result.message}"
         }
         _busy.value = false
+    }
+
+    /** The rule editor's own refresh, when the picker for a bill is empty. */
+    fun syncRecurringRules() = viewModelScope.launch {
+        _busy.value = true
+        _message.value = describeRecurringSync(repo.syncRecurringRules()).removePrefix(", ")
+        _busy.value = false
+    }
+
+    private fun describeRecurringSync(result: ApiResult<Int>): String = when (result) {
+        is ApiResult.Ok -> ", ${result.value} recurring rule(s)"
+        is ApiResult.ClientError -> ", recurring rules unavailable (${result.message})"
+        is ApiResult.ServerError -> ", recurring rules unavailable (${result.message})"
+        is ApiResult.NetworkError -> ", recurring rules unavailable (${result.message})"
     }
 
     fun sendNow(outboxId: Long) = viewModelScope.launch {

@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import ch.marty.finreader.data.db.LocationMode
+import ch.marty.finreader.data.db.RuleTarget
 import ch.marty.finreader.ui.MainViewModel
 
 @Composable
@@ -76,14 +77,19 @@ fun RulesScreen(viewModel: MainViewModel, onEdit: (String) -> Unit, onCreate: ()
                             fontFamily = FontFamily.Monospace,
                         )
                         Text(
-                            "→ ${rule.sourceAccountName ?: rule.sourceAccountId}" +
-                                (rule.categoryName?.let { " · $it" } ?: "") +
-                                (if (rule.autoPost) "" else " · manual") +
-                                when (rule.locationMode) {
-                                    LocationMode.ATTACH -> ""
-                                    LocationMode.NEVER -> " · no location"
-                                    LocationMode.UNLESS_PATTERN -> " · location by pattern"
-                                },
+                            if (rule.target == RuleTarget.RECURRING_BILL) {
+                                "→ bill for ${rule.recurringRuleName ?: rule.recurringRuleId ?: "—"}" +
+                                    (if (rule.autoPost) "" else " · manual")
+                            } else {
+                                "→ ${rule.sourceAccountName ?: rule.sourceAccountId}" +
+                                    (rule.categoryName?.let { " · $it" } ?: "") +
+                                    (if (rule.autoPost) "" else " · manual") +
+                                    when (rule.locationMode) {
+                                        LocationMode.ATTACH -> ""
+                                        LocationMode.NEVER -> " · no location"
+                                        LocationMode.UNLESS_PATTERN -> " · location by pattern"
+                                    }
+                            },
                             style = MaterialTheme.typography.labelMedium,
                         )
                         Row {

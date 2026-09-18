@@ -57,6 +57,13 @@ cash-flow*, *accepted*, *rejected* — with a button that jumps straight to
 `/pending` or, once accepted, to the entry in edit mode. *Check what cash-flow
 did with them* refreshes those labels; the background sync does it too.
 
+**Bills** go elsewhere: set a rule's *Creates* to *Bill for a recurring entry* and
+pick the cash-flow recurring rule from the dropdown (only rules with a variable
+amount are listed). The bill's amount and the notification's date are proposed for
+that rule's next entry, marked in cash-flow as provided by FinReader — you still
+post it there. A bill whose entry was already posted is refused; the card then
+offers *Open entry to edit* so you can correct the amount by hand.
+
 *Run rules again* works on an already-posted transaction as well: the pending
 entry is deleted in cash-flow and recreated if a rule still matches. One you
 have already accepted is off limits — undo it in cash-flow first.

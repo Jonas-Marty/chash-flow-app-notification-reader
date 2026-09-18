@@ -86,3 +86,63 @@ data class PendingTransactionDto(
 data class PendingListResponse(
     @SerialName("pending_transactions") val pendingTransactions: List<PendingTransactionDto> = emptyList(),
 )
+
+@Serializable
+data class RecurringRulesResponse(
+    @SerialName("recurring_rules") val recurringRules: List<RecurringRuleDto> = emptyList(),
+)
+
+@Serializable
+data class RecurringRuleDto(
+    val id: String,
+    val name: String,
+    @SerialName("estimated_amount") val estimatedAmount: Double? = null,
+    @SerialName("is_variable_amount") val isVariableAmount: Boolean = false,
+    /** Absent on a server that predates bill proposals; derived from the amount flag then. */
+    @SerialName("accepts_proposals") val acceptsProposals: Boolean? = null,
+    @SerialName("next_pending_occurrence") val nextPendingOccurrence: OccurrenceDateDto? = null,
+)
+
+@Serializable
+data class OccurrenceDateDto(
+    @SerialName("due_on") val dueOn: String? = null,
+    @SerialName("effective_on") val effectiveOn: String? = null,
+)
+
+/** Mirrors the request body accepted by `/api/public/recurring-proposals`. */
+@Serializable
+data class RecurringProposalPayload(
+    @SerialName("recurring_rule_id") val recurringRuleId: String,
+    val amount: String,
+    /** The notification's date; the web app pre-fills the transaction date with it. */
+    @SerialName("occurred_on") val occurredOn: String,
+    /** Shown to the user in the web app as who provided the numbers. */
+    @SerialName("external_source") val externalSource: String,
+    @SerialName("external_ref") val externalRef: String,
+    @SerialName("external_info") val externalInfo: String? = null,
+)
+
+@Serializable
+data class RecurringProposalResponse(
+    @SerialName("recurring_proposal") val proposal: RecurringProposalDto? = null,
+    val deduplicated: Boolean = false,
+    val error: String? = null,
+    /** `already_posted`, `skipped`, `no_occurrence`, `fixed_amount`, … */
+    val code: String? = null,
+)
+
+@Serializable
+data class RecurringProposalDto(
+    @SerialName("occurrence_id") val occurrenceId: String,
+    @SerialName("rule_name") val ruleName: String? = null,
+    @SerialName("effective_on") val effectiveOn: String? = null,
+    /** The occurrence's status: "pending", "posted" or "skipped". */
+    val status: String? = null,
+    @SerialName("transaction_id") val transactionId: String? = null,
+    @SerialName("external_ref") val externalRef: String? = null,
+)
+
+@Serializable
+data class RecurringProposalListResponse(
+    @SerialName("recurring_proposals") val proposals: List<RecurringProposalDto> = emptyList(),
+)

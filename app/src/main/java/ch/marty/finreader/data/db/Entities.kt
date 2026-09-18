@@ -87,6 +87,19 @@ enum class LocationMode {
     UNLESS_PATTERN,
 }
 
+/** What a matched notification turns into in the web app. */
+enum class RuleTarget {
+    /** A pending transaction, confirmed on `/pending`. */
+    PENDING_TRANSACTION,
+
+    /**
+     * A bill: its amount and the notification's date are proposed for the next
+     * entry of a variable-amount recurring rule, which the user still posts by
+     * hand. Nothing is created on `/pending`.
+     */
+    RECURRING_BILL,
+}
+
 enum class TxTypeMode {
     EXPENSE,
     INCOME,
@@ -108,7 +121,7 @@ data class Rule(
     val titlePattern: String? = null,
     /** Regex with named groups, matched against the whole notification. */
     val textPattern: String,
-    /** If this matches, the notification is deliberately skipped. */
+    /** One regex per line; a line that matches skips the notification. */
     val excludePattern: String? = null,
     val amountGroup: String = "amount",
     val merchantGroup: String? = "merchant",
@@ -121,7 +134,11 @@ data class Rule(
     val locationMode: LocationMode = LocationMode.ATTACH,
     /** With [LocationMode.UNLESS_PATTERN]: a match here suppresses the fix. */
     val locationExcludePattern: String? = null,
-    /** uuid of an account in the web app. */
+    val target: RuleTarget = RuleTarget.PENDING_TRANSACTION,
+    /** With [RuleTarget.RECURRING_BILL]: uuid of the recurring rule in the web app. */
+    val recurringRuleId: String? = null,
+    val recurringRuleName: String? = null,
+    /** uuid of an account in the web app; unused for [RuleTarget.RECURRING_BILL]. */
     val sourceAccountId: String,
     val sourceAccountName: String? = null,
     val sourceAccountCurrency: String? = null,
@@ -172,6 +189,13 @@ enum class OutboxState {
 
     /** Undone before it was sent. */
     CANCELLED,
+
+    /**
+     * The web app understood it and said no for a reason retrying cannot fix —
+     * a bill whose recurring entry was already posted or skipped. The user has
+     * to act in the web app, so this is not offered for sending again.
+     */
+    REFUSED,
 }
 
 @Entity(
@@ -193,10 +217,20 @@ data class OutboxItem(
     val state: OutboxState = OutboxState.QUEUED,
     val attempts: Int = 0,
     val lastError: String? = null,
+    /** The pending transaction's id, or the recurring occurrence's for a bill. */
     val remotePendingId: String? = null,
+    /** Which endpoint [payloadJson] is for; taken from the rule when captured. */
+    val target: RuleTarget = RuleTarget.PENDING_TRANSACTION,
+    /** For a bill: the recurring rule it fills, and that entry's date once known. */
+    val recurringRuleName: String? = null,
+    val recurringDueOn: String? = null,
     /** What the web app has done with it since, null until first checked. */
     val serverStatus: ServerStatus? = null,
-    /** Set once the pending transaction is confirmed; links to /edit/<id>. */
+    /**
+     * Set once the pending transaction is confirmed or the bill's entry posted;
+     * links to /edit/<id>. Also set on a REFUSED bill, whose entry was posted
+     * before the bill arrived.
+     */
     val confirmedTransactionId: String? = null,
     val rejectReason: String? = null,
     val statusCheckedAt: Long = 0,
@@ -239,5 +273,18 @@ data class CategoryCache(
     val name: String,
     val groupName: String?,
     val archived: Boolean = false,
+    val sortIndex: Int = 0,
+)
+
+/** Mirror of `/api/public/recurring-rules`, for the rule editor's picker. */
+@Entity(tableName = "recurring_rule_cache")
+data class RecurringRuleCache(
+    @PrimaryKey val id: String,
+    val name: String,
+    /** Variable amount — the only rules a bill may fill in. */
+    val acceptsProposals: Boolean,
+    val estimatedAmount: Double?,
+    /** Date of the next entry still waiting to be posted, `yyyy-MM-dd`. */
+    val nextDueOn: String?,
     val sortIndex: Int = 0,
 )

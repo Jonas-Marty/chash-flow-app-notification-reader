@@ -113,7 +113,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 viewModel.saveSettings { copy(baseUrl = baseUrl, apiToken = token) }
                 viewModel.testConnection()
             }) { Text("Save & test") }
-            OutlinedButton(onClick = { viewModel.syncCatalog() }) { Text("Refresh accounts & categories") }
+            OutlinedButton(onClick = { viewModel.syncCatalog() }) { Text("Refresh accounts, categories & recurring rules") }
         }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
 

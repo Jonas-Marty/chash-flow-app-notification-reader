@@ -30,6 +30,7 @@ import ch.marty.finreader.data.db.CapturedNotification
 import ch.marty.finreader.data.db.MatchState
 import ch.marty.finreader.data.db.OutboxItem
 import ch.marty.finreader.data.db.OutboxState
+import ch.marty.finreader.data.db.RuleTarget
 import ch.marty.finreader.data.db.ServerStatus
 import ch.marty.finreader.domain.AmountParser
 import ch.marty.finreader.ui.MainViewModel
@@ -183,12 +184,13 @@ private fun CaptureCard(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 StatusChip(stateLabel(capture, outboxItem))
                 outboxItem?.let {
                     StatusChip("${it.currency} ${AmountParser.centsToPlainString(it.amountCents)}")
                 }
-                outboxItem?.serverStatus?.let { StatusChip(serverLabel(it)) }
+                outboxItem?.serverStatus?.let { StatusChip(serverLabel(it, outboxItem.target)) }
+                outboxItem?.takeIf { it.target == RuleTarget.RECURRING_BILL }?.let { StatusChip(billLabel(it)) }
             }
 
             capture.detail?.let {
@@ -213,12 +215,18 @@ private fun CaptureCard(
                     TextButton(onClick = onRerun) { Text("Run rules again") }
                 }
                 outboxItem?.let { item ->
-                    if (item.serverStatus != null) {
+                    // A late bill is refused, but it knows the transaction that was
+                    // posted without it: that is where the amount gets corrected.
+                    val refusedWithEntry = item.state == OutboxState.REFUSED && item.confirmedTransactionId != null
+                    if (item.serverStatus != null || refusedWithEntry) {
                         webLink(item)?.let { url ->
                             TextButton(onClick = { context.openUrl(url) }) {
                                 Text(
-                                    if (item.serverStatus == ServerStatus.CONFIRMED) "Open entry"
-                                    else "Open in cash-flow",
+                                    when {
+                                        refusedWithEntry -> "Open entry to edit"
+                                        item.serverStatus == ServerStatus.CONFIRMED -> "Open entry"
+                                        else -> "Open in cash-flow"
+                                    },
                                 )
                             }
                         }
@@ -297,6 +305,7 @@ private fun stateLabel(capture: CapturedNotification, item: OutboxItem?): String
         OutboxState.FAILED_RETRY -> "retrying (${item.attempts})"
         OutboxState.FAILED_PERMANENT -> "failed"
         OutboxState.CANCELLED -> "cancelled"
+        OutboxState.REFUSED -> "refused"
     }
 
     else -> when (capture.matchState) {
@@ -308,11 +317,26 @@ private fun stateLabel(capture: CapturedNotification, item: OutboxItem?): String
     }
 }
 
-private fun serverLabel(status: ServerStatus): String = when (status) {
-    ServerStatus.PENDING -> "open in cash-flow"
-    ServerStatus.CONFIRMED -> "accepted"
-    ServerStatus.REJECTED -> "rejected"
-    ServerStatus.GONE -> "deleted in cash-flow"
+private fun serverLabel(status: ServerStatus, target: RuleTarget): String = when (target) {
+    RuleTarget.PENDING_TRANSACTION -> when (status) {
+        ServerStatus.PENDING -> "open in cash-flow"
+        ServerStatus.CONFIRMED -> "accepted"
+        ServerStatus.REJECTED -> "rejected"
+        ServerStatus.GONE -> "deleted in cash-flow"
+    }
+
+    RuleTarget.RECURRING_BILL -> when (status) {
+        ServerStatus.PENDING -> "waiting to be posted"
+        ServerStatus.CONFIRMED -> "posted"
+        ServerStatus.REJECTED -> "skipped in cash-flow"
+        ServerStatus.GONE -> "replaced or discarded"
+    }
+}
+
+/** Which recurring entry a bill is for, and its date once cash-flow said. */
+private fun billLabel(item: OutboxItem): String {
+    val due = item.recurringDueOn?.split("-")?.takeIf { it.size == 3 }?.let { " · ${it[2]}.${it[1]}." }
+    return "bill → ${item.recurringRuleName ?: "recurring entry"}${due.orEmpty()}"
 }
 
 private fun timestamp(epochMillis: Long): String =
