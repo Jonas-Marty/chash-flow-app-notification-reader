@@ -137,18 +137,40 @@ keyPassword=…
 or export `FINREADER_KEYSTORE`, `FINREADER_KEYSTORE_PASSWORD`, `FINREADER_KEY_ALIAS`,
 `FINREADER_KEY_PASSWORD`. Keep the keystore out of the repo — `*.jks` is gitignored.
 
-### CI
+### Publishing to the phone
 
-`.github/workflows/build.yml` runs the tests and uploads a release APK artifact on
-every push to `main`; pushing a `v*` tag also attaches the APK to a GitHub release.
-Add these repository secrets to get a properly signed build:
+```bash
+scripts/publish-apk.sh            # build, publish, notify
+scripts/publish-apk.sh --quiet    # build and publish, say nothing
+```
 
-| Secret | Value |
-| --- | --- |
-| `FINREADER_KEYSTORE_BASE64` | `base64 -w0 finreader.jks` |
-| `FINREADER_KEYSTORE_PASSWORD` | keystore password |
-| `FINREADER_KEY_ALIAS` | `finreader` |
-| `FINREADER_KEY_PASSWORD` | key password |
+Builds a signed release, publishes it at `https://apk.wi-wo.ch`, and sends a
+Gotify notification whose link downloads it — tap the notification, tap the file,
+done. The browser needs "install unknown apps" once.
+
+The version in the filename is read back out of the finished APK with
+`apkanalyzer` rather than out of `build.gradle.kts`, because a stale APK left by
+an earlier run is exactly the mistake worth catching. `versionCode` is the commit
+count, so it only ever grows and nothing has to be remembered — but two builds off
+one commit share a code, and the phone will not see the second as an upgrade.
+Commit before rebuilding. Publishing refuses to run without a release keystore: a
+debug-signed build installs and then can never upgrade the real one.
+
+nginx serves `/home/jonas/finreader-apk` (`deploy/apk-host.compose.yml`) behind
+Authentik forward auth, wired as Traefik labels on that compose so no shared
+Traefik config is involved and the auth cannot be lost by editing a domain
+elsewhere. An unauthenticated request for an APK is redirected to `auth.wi-wo.ch`,
+not handed the file. The last ten builds stay online, so going back to one that
+worked is a tap.
+
+The Gotify token lives in `~/.config/finreader/gotify-token`. Paths and URLs are
+overridable: `FINREADER_PUBLISH_DIR`, `FINREADER_APK_URL`, `FINREADER_GOTIFY_URL`,
+`FINREADER_GOTIFY_TOKEN_FILE`, `FINREADER_KEEP_BUILDS`.
+
+If `apk.wi-wo.ch` starts answering 500 out of nowhere, suspect the forward-auth
+address in `deploy/apk-host.compose.yml`. It points at `authentik-server`, a
+network alias the Authentik compose declares for itself; replacing that compose
+without the alias leaves nothing for the name to resolve to.
 
 ## Docs
 

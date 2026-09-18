@@ -1,0 +1,54 @@
+# Serves the published APKs at https://apk.wi-wo.ch, behind Authentik.
+#
+# Everything Traefik needs is a label on this service, so no file in
+# /etc/dokploy/traefik is touched and the auth cannot be lost by editing a
+# domain elsewhere.
+#
+# THIS FILE IS THE SOURCE, NOT WHAT RUNS. The deployed copy lives in Dokploy as
+# the raw compose "finreader-apk" (project Cash Flow, production). Editing here
+# changes nothing until it is pushed there and redeployed.
+#
+# nginx needs no config of its own: it serves /usr/share/nginx/html, autoindex
+# is off by default, and an unknown extension like .apk is sent as
+# application/octet-stream — which is exactly what makes the browser download
+# it rather than try to render it. scripts/publish-apk.sh writes the index.html.
+
+services:
+  apk:
+    image: nginx:alpine
+    restart: unless-stopped
+    volumes:
+      # Written by scripts/publish-apk.sh on the host, read-only in here.
+      - /home/jonas/finreader-apk:/usr/share/nginx/html:ro
+    networks:
+      - dokploy-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+
+      - traefik.http.routers.finreader-apk.rule=Host(`apk.wi-wo.ch`)
+      - traefik.http.routers.finreader-apk.entrypoints=websecure
+      - traefik.http.routers.finreader-apk.tls.certresolver=letsencrypt
+      - traefik.http.services.finreader-apk.loadbalancer.server.port=80
+
+      # Authentik's embedded outpost. Every request goes through here first,
+      # which is also why the login callback needs no route of its own: it is
+      # just another request the middleware hands to the outpost.
+      #
+      # "authentik-server" is a network alias declared by the authentik compose
+      # itself (`networks: dokploy-network: aliases:`), so it survives a
+      # redeploy — unlike the generated container name, which carries Dokploy's
+      # random suffix and the replica index. Compose also aliases the bare
+      # service name "server", but that is far too generic to rely on: any
+      # other stack with a service called "server" would collide on the shared
+      # network. If the authentik compose is ever replaced without the alias,
+      # this address stops resolving and apk.wi-wo.ch answers 500.
+      - traefik.http.middlewares.finreader-authentik.forwardauth.address=http://authentik-server:9000/outpost.goauthentik.io/auth/traefik
+      - traefik.http.middlewares.finreader-authentik.forwardauth.trustForwardHeader=true
+      - traefik.http.middlewares.finreader-authentik.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid
+
+      - traefik.http.routers.finreader-apk.middlewares=finreader-authentik@docker
+
+networks:
+  dokploy-network:
+    external: true

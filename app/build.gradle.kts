@@ -47,6 +47,18 @@ val gitSha: String = (
     // not describe it.
     ) + if (gitOutput("git", "status", "--porcelain").isNullOrBlank()) "" else "+"
 
+/**
+ * One commit, one versionCode: nothing to remember to bump, and the number only
+ * ever grows, which is what Android demands of an upgrade. Two builds off the
+ * same commit share a code — fine to install, but the phone sees no new version,
+ * so commit before rebuilding.
+ *
+ * A shallow clone counts only the commits it fetched, so a build made from one
+ * would claim a lower number than the phone already has, and the install would
+ * be refused as a downgrade. Clone with full history.
+ */
+val gitVersionCode: Int = gitOutput("git", "rev-list", "--count", "HEAD")?.toIntOrNull() ?: 1
+
 android {
     namespace = "ch.marty.finreader"
     compileSdk = 36
@@ -55,7 +67,7 @@ android {
         applicationId = "ch.marty.finreader"
         minSdk = 29
         targetSdk = 36
-        versionCode = 10
+        versionCode = gitVersionCode
         versionName = "0.1.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
