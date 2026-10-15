@@ -68,6 +68,18 @@ offers *Open entry to edit* so you can correct the amount by hand.
 entry is deleted in cash-flow and recreated if a rule still matches. One you
 have already accepted is off limits — undo it in cash-flow first.
 
+**Let an AI write the rule.** Writing a regex by hand is the slow part, so the rule
+editor builds a prompt you can hand to any AI chat. Nothing is linked and no AI is
+called from the phone. *Share prompt* / *Copy prompt* packs the app's last ten
+notifications exactly as captured (invisible spaces spelled out as ` `), how
+the engine runs a pattern (ICU regex, brace escaping, group names), your category
+names and your other rules for that app. Paste the chat's JSON reply with
+*Paste reply*. It fills in a draft and lists what you still have to pick (account,
+recurring entry) and what looks wrong. Account and recurring-entry ids never leave
+the phone, and an imported rule always starts with *Send automatically* off. Below
+the tester, *All samples* runs the rule against every capture at once and marks
+any sample where it does not do what the reply claimed (✗).
+
 Every named group of the pattern is a `{placeholder}` in the description and note
 templates. Add modifiers after a colon when the value has to survive as a hashtag —
 `#{merchant:d}` turns "Coop City" into `#Coop-City`. The full list is in

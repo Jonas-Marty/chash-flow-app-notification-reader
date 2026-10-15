@@ -11,6 +11,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -20,11 +21,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ch.marty.finreader.data.db.AccountCache
 import ch.marty.finreader.data.db.CapturedNotification
@@ -40,12 +46,20 @@ import ch.marty.finreader.domain.AmountParser
 import ch.marty.finreader.domain.MatchOutcome
 import ch.marty.finreader.domain.RuleDrafter
 import ch.marty.finreader.domain.RuleEngine
+import ch.marty.finreader.domain.RuleExchange
+import ch.marty.finreader.domain.RulePrompt
 import ch.marty.finreader.domain.Template
 import ch.marty.finreader.domain.toInput
 import ch.marty.finreader.ui.MainViewModel
 import ch.marty.finreader.util.CrashLog
+import android.content.ClipData
+import android.content.Intent
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 @Composable
 fun RuleEditorScreen(
@@ -58,6 +72,7 @@ fun RuleEditorScreen(
     val categories by viewModel.categories.collectAsState()
     val recurringRules by viewModel.recurringRules.collectAsState()
     val monitoredApps by viewModel.monitoredApps.collectAsState()
+    val allRules by viewModel.rules.collectAsState()
 
     var rule by remember { mutableStateOf<Rule?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
@@ -111,6 +126,8 @@ fun RuleEditorScreen(
             categories = categories,
             recurringRules = recurringRules,
             monitoredApps = monitoredApps,
+            otherRules = allRules.filter { it.id != current.id },
+            focusCaptureId = captureId.takeIf { it > 0 },
             onDone = onDone,
         )
     }
@@ -126,11 +143,15 @@ private fun RuleEditorContent(
     categories: List<CategoryCache>,
     recurringRules: List<RecurringRuleCache>,
     monitoredApps: List<MonitoredApp>,
+    otherRules: List<Rule>,
+    focusCaptureId: Long?,
     onDone: () -> Unit,
 ) {
     val isBill = current.target == RuleTarget.RECURRING_BILL
     var samples by remember { mutableStateOf<List<CapturedNotification>>(emptyList()) }
     var sampleIndex by remember { mutableStateOf(0) }
+    // What the last pasted reply claimed; only lives as long as the editor.
+    var expectations by remember { mutableStateOf<Map<Long, String?>?>(null) }
 
     LaunchedEffect(current.packageName) {
         samples = runCatching { viewModel.samplesFor(current.packageName) }.getOrDefault(emptyList())
@@ -174,6 +195,21 @@ private fun RuleEditorContent(
         Field("Name", current.name) { onChange(current.copy(name = it)) }
 
         AppPicker(current, monitoredApps, onChange)
+
+        AskAiCard(
+            current = current,
+            isNew = isNew,
+            appLabel = monitoredApps.firstOrNull { it.packageName == current.packageName }?.appLabel
+                ?: samples.firstOrNull()?.appLabel.orEmpty(),
+            samples = samples,
+            focusCaptureId = focusCaptureId,
+            categories = categories,
+            siblings = otherRules.filter { it.packageName == current.packageName },
+            onImported = { imported ->
+                onChange(imported.rule)
+                expectations = imported.expectations
+            },
+        )
 
         LabeledDropdown(
             label = "Creates",
@@ -351,6 +387,7 @@ private fun RuleEditorContent(
             } else {
                 PreviewResult(outcome, accounts.firstOrNull { it.id == current.sourceAccountId })
             }
+            SampleOverview(current, samples, expectations, onPick = { sampleIndex = it })
         }
     }
 }
@@ -646,3 +683,250 @@ private fun accountLabel(account: AccountCache): String =
 
 private fun externalSourceFor(appLabel: String): String =
     appLabel.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "").take(20)
+
+/**
+ * Hands this app's notifications to an AI chat of the user's choosing and takes
+ * its answer back. Nothing here talks to an AI: the prompt leaves through the
+ * share sheet or the clipboard, and the reply comes back through a paste into a
+ * draft that still has to be saved by hand.
+ */
+@Composable
+private fun AskAiCard(
+    current: Rule,
+    isNew: Boolean,
+    appLabel: String,
+    samples: List<CapturedNotification>,
+    focusCaptureId: Long?,
+    categories: List<CategoryCache>,
+    siblings: List<Rule>,
+    onImported: (RuleExchange.Imported) -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var expanded by remember { mutableStateOf(isNew) }
+    var reply by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var choices by remember { mutableStateOf<List<JsonObject>>(emptyList()) }
+    var chosen by remember { mutableStateOf(0) }
+    var report by remember { mutableStateOf<RuleExchange.Imported?>(null) }
+    // The rule as it stood when the reply was pasted, so switching between two
+    // suggested rules does not leave the first one's fields in the second.
+    var base by remember { mutableStateOf(current) }
+
+    fun use(index: Int) {
+        chosen = index
+        val imported = RuleExchange.apply(choices[index], base, categories)
+        report = imported
+        onImported(imported)
+    }
+
+    fun read(text: String) {
+        reply = text
+        when (val parsed = RuleExchange.parse(text)) {
+            is RuleExchange.ParseResult.Error -> {
+                error = parsed.message
+                choices = emptyList()
+                report = null
+            }
+
+            is RuleExchange.ParseResult.Ok -> {
+                error = null
+                base = current
+                choices = parsed.rules
+                use(0)
+            }
+        }
+    }
+
+    // The notification the rule was started from goes first, whatever its age.
+    val promptSamples = samples
+        .sortedByDescending { it.id == focusCaptureId }
+        .take(RulePrompt.MAX_SAMPLES)
+    val app = appLabel.ifBlank { current.packageName }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Let an AI write this rule", style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Show") }
+            }
+            if (!expanded) return@Column
+
+            when {
+                current.packageName.isBlank() -> Text(
+                    "Pick the app first — the prompt is built from its notifications.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                promptSamples.isEmpty() -> Text(
+                    "Nothing captured from $app yet — the prompt needs at least one notification.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                else -> {
+                    val prompt = {
+                        RulePrompt.build(
+                            RulePrompt.Request(
+                                appLabel = app,
+                                packageName = current.packageName,
+                                samples = promptSamples.map { RulePrompt.Sample(it.id, it.toInput()) },
+                                focusSampleId = focusCaptureId,
+                                categoryNames = categories.filterNot { it.archived }.map { it.name },
+                                current = current.takeUnless { isNew },
+                                siblings = siblings,
+                            ),
+                        )
+                    }
+                    Text(
+                        "1. Send the prompt to any AI chat. It contains the last ${promptSamples.size} " +
+                            "notifications from $app exactly as captured — amounts, merchants, card digits — " +
+                            "and your category names.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, prompt())
+                            }
+                            context.startActivity(Intent.createChooser(send, "Ask an AI"))
+                        }) { Text("Share prompt") }
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("FinReader rule prompt", prompt())))
+                            }
+                        }) { Text("Copy prompt") }
+                    }
+
+                    Text(
+                        "2. Copy the chat's reply and paste it here. It fills in the fields below; " +
+                            "nothing is saved until you press Save.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            scope.launch {
+                                val text = clipboard.getClipEntry()?.clipData
+                                    ?.takeIf { it.itemCount > 0 }
+                                    ?.getItemAt(0)
+                                    ?.coerceToText(context)
+                                    ?.toString()
+                                if (text.isNullOrBlank()) error = "The clipboard is empty." else read(text)
+                            }
+                        }) { Text("Paste reply") }
+                        OutlinedButton(enabled = reply.isNotBlank(), onClick = { read(reply) }) { Text("Fill in") }
+                    }
+                    OutlinedTextField(
+                        value = reply,
+                        onValueChange = { reply = it },
+                        label = { Text("Reply") },
+                        maxLines = 5,
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    error?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+
+                    if (choices.size > 1) {
+                        Text(
+                            "The reply suggests ${choices.size} rules. One is filled in at a time: save it, " +
+                                "then start another rule and paste the same reply again.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        choices.forEachIndexed { index, spec ->
+                            val name = (spec["name"] as? JsonPrimitive)?.contentOrNull ?: "Rule ${index + 1}"
+                            TextButton(onClick = { use(index) }) {
+                                Text((if (index == chosen) "● " else "○ ") + name)
+                            }
+                        }
+                    }
+
+                    report?.let { ImportReport(it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportReport(imported: RuleExchange.Imported) {
+    if (imported.filled.isNotEmpty()) {
+        Text(
+            "Filled in: " + imported.filled.joinToString(", "),
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+    imported.warnings.forEach {
+        Text("• $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+    imported.explanation?.let {
+        Text("Why: $it", style = MaterialTheme.typography.bodySmall)
+    }
+    if (imported.expectations != null) {
+        Text(
+            "Check the sample list at the bottom: ✗ marks a sample where the rule does not do what the reply claimed.",
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/**
+ * Every sample against the rule at once. Testing one sample at a time hides
+ * the notification a pattern catches by accident — the balance update that
+ * reads like a payment.
+ */
+@Composable
+private fun SampleOverview(
+    rule: Rule,
+    samples: List<CapturedNotification>,
+    expectations: Map<Long, String?>?,
+    onPick: (Int) -> Unit,
+) {
+    Text("All ${samples.size} samples", style = MaterialTheme.typography.titleSmall)
+    samples.forEachIndexed { index, sample ->
+        val outcome = runCatching { RuleEngine.apply(rule, sample.toInput()) }.getOrNull()
+        val matched = outcome as? MatchOutcome.Matched
+        val result = when (outcome) {
+            is MatchOutcome.Matched ->
+                "${AmountParser.centsToPlainString(outcome.extraction.amountCents)} ${outcome.extraction.currency}"
+            is MatchOutcome.Ignored -> "skipped"
+            is MatchOutcome.Failed -> "error"
+            is MatchOutcome.NoMatch, null -> "no match"
+        }
+        // Null when the reply made no claim; otherwise what it got wrong.
+        val miss: String? = expectations?.let { expected ->
+            val wanted = expected.containsKey(sample.id)
+            val wantedCents = expected[sample.id]?.let { AmountParser.parseToCents(it) }
+            when {
+                wanted && matched == null -> "expected ${expected[sample.id] ?: "a match"}"
+                !wanted && matched != null -> "expected no match"
+                wantedCents != null && matched != null && wantedCents != matched.extraction.amountCents ->
+                    "expected ${expected[sample.id]}"
+                else -> null
+            }
+        }
+        val mark = when {
+            expectations == null -> "·"
+            miss == null -> "✓"
+            else -> "✗"
+        }
+        TextButton(onClick = { onPick(index) }, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "$mark ${result.padEnd(13)} ${miss?.let { "($it) " }.orEmpty()}" +
+                    sample.haystack.replace('\n', ' ').take(60),
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = if (miss != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
