@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import ch.marty.finreader.AppContainer
+import ch.marty.finreader.data.LocationCapture
 import ch.marty.finreader.data.OutboxLocation
 import ch.marty.finreader.data.api.ApiResult
 import ch.marty.finreader.data.api.ProposalOutcome
@@ -35,8 +36,8 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 if (sendBill(container, item)) shouldRetry = true
                 continue
             }
-            val payload = withLocation(container, item)
-            when (val result = container.api.postPending(payload)) {
+            val located = withLocation(container, item)
+            when (val result = container.api.postPending(located.payloadJson)) {
                 is ApiResult.Ok -> {
                     outbox.updateResult(
                         id = item.id,
@@ -45,6 +46,7 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                         lastError = null,
                         remoteId = result.value.remoteId,
                     )
+                    recordDelivery(container, item, located)
                     container.notifier.cancelCaptured(item.id)
                 }
 
@@ -60,13 +62,20 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             }
         }
 
+        refineLocations(container)
+
         // Piggy-backs on the periodic run so the accepted/rejected labels in the
         // inbox stay roughly current without a worker of their own. Costs
         // nothing when nothing has been posted.
         container.repository.refreshServerStatus()
 
-        // Items still inside their undo window need their own wake-up.
-        outbox.nextDueAfter(System.currentTimeMillis())?.let { next ->
+        // Items still inside their undo window, and rows whose one refinement
+        // is still ahead of them, both need their own wake-up.
+        val nextWake = listOfNotNull(
+            outbox.nextDueAfter(System.currentTimeMillis()),
+            outbox.nextRefineAfter(System.currentTimeMillis()),
+        ).minOrNull()
+        nextWake?.let { next ->
             val delay = next - System.currentTimeMillis()
             if (delay > 0 && !shouldRetry) SyncScheduler.kickOutbox(applicationContext, delay)
         }
@@ -147,18 +156,40 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 
     /**
+     * What a payload left with, so the outcome can be recorded once the server
+     * has answered. [note] is null only when this payment was never meant to
+     * carry a location at all — there is nothing to explain in that case.
+     */
+    private data class Located(
+        val payloadJson: String,
+        val fix: LocationCapture.Fix?,
+        val note: String?,
+        /** Capture is on, but the platform would not answer. */
+        val blocked: Boolean = false,
+    )
+
+    /**
      * Last chance to improve the fix taken when the notification arrived. The
      * undo window has just elapsed, so the phone has had a few seconds of
      * standing still at the till — often the difference between a cell-tower
      * guess and something that actually picks out the right branch.
      */
-    private suspend fun withLocation(container: AppContainer, item: OutboxItem): String {
+    private suspend fun withLocation(container: AppContainer, item: OutboxItem): Located {
         val settings = container.settings.current()
         // The rule's verdict was taken when the notification arrived and is not
         // revisited here; a fresher fix must not smuggle a location into a
         // payment that was meant to travel without one.
         if (!settings.captureLocation || !item.attachLocation) {
-            return OutboxLocation.inject(item.payloadJson, null)
+            return Located(OutboxLocation.inject(item.payloadJson, null), null, null)
+        }
+
+        container.locationCapture.unavailableReason()?.let { reason ->
+            return Located(
+                payloadJson = OutboxLocation.inject(item.payloadJson, null),
+                fix = null,
+                note = OutboxLocation.blockedNote(reason),
+                blocked = true,
+            )
         }
 
         val stored = OutboxLocation.storedFix(item)
@@ -178,7 +209,112 @@ class OutboxWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 takenAt = fix.takenAt,
             )
         }
-        return OutboxLocation.inject(item.payloadJson, fix)
+        return Located(
+            payloadJson = OutboxLocation.inject(item.payloadJson, fix),
+            fix = fix,
+            note = OutboxLocation.sentNote(fix, null),
+        )
+    }
+
+    /**
+     * Records what the server now holds, and books the one refinement attempt.
+     * Nothing is booked when the platform refused to answer: ninety seconds
+     * will not grant a permission.
+     */
+    private suspend fun recordDelivery(container: AppContainer, item: OutboxItem, located: Located) {
+        val note = located.note ?: return
+        val sentAccuracyM = located.fix?.accuracyM
+        val refineAt = if (located.blocked) {
+            0L
+        } else {
+            OutboxLocation.refineAt(item.createdAt, sentAccuracyM, System.currentTimeMillis())
+        }
+        container.db.outbox().updateLocationDelivery(
+            id = item.id,
+            sentAccuracyM = sentAccuracyM,
+            refineAt = refineAt,
+            note = note,
+        )
+    }
+
+    /**
+     * The second and final look at where a payment happened.
+     *
+     * The server replaces a pending row's location on a repeat POST with the
+     * same `external_ref`, and only the location — a second, worse parse of the
+     * notification cannot rewrite what the user is about to review. So the
+     * phone is free to send the payment the instant it is captured and come
+     * back with a better answer a minute later, which is the whole point: at a
+     * till, the good fix arrives after the notification, not before it.
+     *
+     * One attempt per payment. A refinement is a nicety, and a phone that keeps
+     * waking to re-take fixes is a location feature that gets switched off.
+     */
+    private suspend fun refineLocations(container: AppContainer) {
+        val outbox = container.db.outbox()
+        val now = System.currentTimeMillis()
+        val due = outbox.dueForRefining(now)
+        if (due.isEmpty()) return
+
+        val settings = container.settings.current()
+        // Switched off, or so late that a fresh fix would say where the phone
+        // is now rather than where the money went.
+        val (expired, live) = due.partition {
+            !settings.captureLocation || OutboxLocation.isTooLateToRefine(it, now)
+        }
+        expired.forEach { outbox.updateLocationDelivery(it.id, it.locationSentAccuracyM, 0, it.locationNote) }
+        if (live.isEmpty()) return
+
+        // One reading serves every payment due in this pass. They are all from
+        // the same few minutes, so a second would cost battery to say the same
+        // thing — and two payments in one shop should agree on where they were.
+        val fresh = container.locationCapture.fresh(OutboxLocation.REFINE_TIMEOUT_MS)
+
+        for (item in live) {
+            val candidate = OutboxLocation.choose(
+                OutboxLocation.storedFix(item),
+                fresh,
+                System.currentTimeMillis(),
+                settings,
+            )
+            if (candidate == null ||
+                !OutboxLocation.isMeaningfulImprovement(item.locationSentAccuracyM, candidate.accuracyM)
+            ) {
+                outbox.updateLocationDelivery(item.id, item.locationSentAccuracyM, 0, item.locationNote)
+                continue
+            }
+
+            when (val result = container.api.postPending(OutboxLocation.inject(item.payloadJson, candidate))) {
+                is ApiResult.Ok -> {
+                    val accepted = result.value.locationUpdated
+                    outbox.updateLocation(
+                        id = item.id,
+                        latitude = candidate.latitude,
+                        longitude = candidate.longitude,
+                        accuracyM = candidate.accuracyM,
+                        takenAt = candidate.takenAt,
+                    )
+                    outbox.updateLocationDelivery(
+                        id = item.id,
+                        sentAccuracyM = if (accepted) candidate.accuracyM else item.locationSentAccuracyM,
+                        refineAt = 0,
+                        note = OutboxLocation.refinedNote(candidate.accuracyM, accepted),
+                    )
+                }
+
+                is ApiResult.ClientError -> outbox.updateLocationDelivery(
+                    id = item.id,
+                    sentAccuracyM = item.locationSentAccuracyM,
+                    refineAt = 0,
+                    note = "Location refinement refused: ${result.message}",
+                )
+
+                // Left booked rather than burned: another run inside the
+                // deadline may still get it through, and past the deadline the
+                // check at the top of the loop clears it.
+                else -> Unit
+            }
+        }
     }
 
     private companion object {

@@ -250,6 +250,27 @@ data class OutboxItem(
      * rule may well have been edited or deleted by then.
      */
     val attachLocation: Boolean = true,
+    /**
+     * The accuracy of the fix the server actually holds, null when it holds no
+     * point. Distinct from [locationAccuracyM], which is the best fix the phone
+     * has: between a post and a refinement the two differ, and the gap is
+     * exactly what decides whether a second POST is worth making.
+     */
+    val locationSentAccuracyM: Float? = null,
+    /**
+     * When to make the one refinement attempt, or 0 for none. The server
+     * improves a pending row's location on a repeat POST with the same
+     * `external_ref`, so a fix that arrives after the payment was sent is not
+     * wasted — see [ch.marty.finreader.data.OutboxLocation.refineAt].
+     */
+    val locationRefineAt: Long = 0,
+    /**
+     * Why this payment carries the location it carries, in words. Covers the
+     * silent cases: a permission that is granted but not for the background, a
+     * fix too vague to be worth storing, a refinement the server took or did
+     * not take. Shown in the Inbox.
+     */
+    val locationNote: String? = null,
     /** Epoch millis before which this must not be sent — the undo window. */
     val notBefore: Long = 0,
     val createdAt: Long = System.currentTimeMillis(),

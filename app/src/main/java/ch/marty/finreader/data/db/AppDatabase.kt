@@ -17,7 +17,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CategoryCache::class,
         RecurringRuleCache::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -83,6 +83,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * The location keeps improving after the payment is sent: the server
+         * takes a better fix on a repeat POST while the row is still pending.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN locationSentAccuracyM REAL")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN locationRefineAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE outbox_item ADD COLUMN locationNote TEXT")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -91,7 +103,13 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "finreader.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
+            ).addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+            ).build().also { instance = it }
         }
     }
 }

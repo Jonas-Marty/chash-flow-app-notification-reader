@@ -202,6 +202,11 @@ private fun CaptureCard(
             outboxItem?.rejectReason?.takeIf { it.isNotBlank() }?.let {
                 Text("Rejected: $it", style = MaterialTheme.typography.bodySmall)
             }
+            // Why this payment carries the place it carries — the difference
+            // between a permission that needs widening and nothing to fix.
+            outboxItem?.locationNote?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall)
+            }
 
             HorizontalDivider()
 

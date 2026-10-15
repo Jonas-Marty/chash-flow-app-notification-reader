@@ -212,6 +212,54 @@ interface OutboxDao {
         takenAt: Long,
     )
 
+    /**
+     * Posted rows whose single location refinement is now due.
+     *
+     * Restricted to rows the server would still accept a better point for: a
+     * pending transaction that has not been confirmed or rejected. DEDUPED
+     * belongs here too — a repeat POST is exactly the mechanism, so a row the
+     * server already had is still refinable.
+     */
+    @Query(
+        """SELECT * FROM outbox_item
+           WHERE locationRefineAt > 0 AND locationRefineAt <= :now
+             AND attachLocation = 1
+             AND target = 'PENDING_TRANSACTION'
+             AND state IN ('POSTED', 'DEDUPED')
+             AND (serverStatus IS NULL OR serverStatus = 'PENDING')
+           ORDER BY locationRefineAt LIMIT :limit""",
+    )
+    suspend fun dueForRefining(now: Long, limit: Int = 20): List<OutboxItem>
+
+    @Query(
+        """SELECT MIN(locationRefineAt) FROM outbox_item
+           WHERE locationRefineAt > :now
+             AND attachLocation = 1
+             AND target = 'PENDING_TRANSACTION'
+             AND state IN ('POSTED', 'DEDUPED')
+             AND (serverStatus IS NULL OR serverStatus = 'PENDING')""",
+    )
+    suspend fun nextRefineAfter(now: Long): Long?
+
+    /**
+     * What the server ended up with, and whether to try once more. Kept apart
+     * from [updateLocation], which records the best fix the *phone* holds: the
+     * two differ exactly while a refinement is outstanding.
+     */
+    @Query(
+        """UPDATE outbox_item
+           SET locationSentAccuracyM = :sentAccuracyM, locationRefineAt = :refineAt,
+               locationNote = :note, updatedAt = :now
+           WHERE id = :id""",
+    )
+    suspend fun updateLocationDelivery(
+        id: Long,
+        sentAccuracyM: Float?,
+        refineAt: Long,
+        note: String?,
+        now: Long = System.currentTimeMillis(),
+    )
+
     /** Used by a re-run, once the row it refers to is gone from the server. */
     @Query("DELETE FROM outbox_item WHERE id = :id")
     suspend fun deleteById(id: Long)

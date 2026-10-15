@@ -229,7 +229,8 @@ private fun LocationSection(viewModel: MainViewModel, enabled: Boolean) {
     Text("Location", style = MaterialTheme.typography.titleMedium)
     SwitchRow(
         title = "Attach where the payment happened",
-        subtitle = "Taken when the notification arrives and improved while the undo window runs.",
+        subtitle = "Taken when the notification arrives, improved while the undo window runs, " +
+            "and once more shortly after the payment is sent.",
         checked = enabled,
     ) { on ->
         if (!on) {
@@ -242,6 +243,15 @@ private fun LocationSection(viewModel: MainViewModel, enabled: Boolean) {
             )
         }
     }
+
+    // Shown on and off alike: this is the part to read *before* deciding, and
+    // the second half is a different decision from the first.
+    Text(
+        "Your coordinates leave the phone with every payment a rule does not exclude. " +
+            "If the web app has an AI connection configured, it is also sent the names of " +
+            "places you saved earlier — never coordinates — so it can tell two nearby shops apart.",
+        style = MaterialTheme.typography.labelSmall,
+    )
 
     if (!enabled) return
 
@@ -256,8 +266,9 @@ private fun LocationSection(viewModel: MainViewModel, enabled: Boolean) {
         ) { context.startActivity(viewModel.appDetailsIntent()) }
 
         else -> Text(
-            "Only sent when the fix is less than 10 minutes old and accurate to 500 m; " +
-                "the web app shows it as the transaction's place and lets you correct it.",
+            "Only sent when the fix is less than 10 minutes old and accurate to 500 m, and " +
+                "improved once about a minute later if a better one arrives by then; the web " +
+                "app shows it as the transaction's place and lets you correct it.",
             style = MaterialTheme.typography.labelSmall,
         )
     }

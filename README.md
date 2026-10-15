@@ -45,7 +45,23 @@ is taken from the platform's own provider (no Play Services) when the notificati
 arrives and improved once more while the undo window runs; it is sent only if it is
 under 10 minutes old and accurate to 500 m. Android needs location set to *Allow all
 the time*, because both the listener and the sender run in the background — the
-switch says so and links to the right screen. Off by default.
+switch says so, links to the right screen, and nothing is even attempted without it.
+Off by default.
+
+The payment is never held back waiting for a good fix. At a till the useful fix
+arrives *after* the notification, so the row is sent with whatever is in hand and
+then, about 90 seconds later, **one** repeat POST under the same `external_ref`
+offers a better one. The server replaces a pending row's location — and only its
+location — when the new reading is at least 10 m and 25 % tighter, so a re-take
+that catches normal GPS jitter never becomes a request. After three minutes the
+attempt is dropped: by then a fresh fix says where the phone is now, not where the
+money went. Each Inbox card says which of these happened.
+
+**What leaves the phone.** Coordinates, on every captured payment a rule does not
+exclude. Separately, if the web app has an AI connection configured, the *names* of
+places saved earlier are sent to that provider so it can tell two nearby shops
+apart — never the coordinates. Those are two different things to opt into and the
+Settings screen says so.
 
 Individual rules can opt out: a rule's **Location** setting can never attach a
 fix, or attach one unless a pattern matches the notification. Online purchases

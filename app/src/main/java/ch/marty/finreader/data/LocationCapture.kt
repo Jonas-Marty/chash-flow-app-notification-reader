@@ -43,9 +43,24 @@ class LocationCapture(private val context: Context) {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
             granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
 
+    /**
+     * Why no fix can be taken right now, or null when one can be.
+     *
+     * Both callers are background — the notification listener and the outbox
+     * worker — so a "while using the app" grant is not enough, and Android
+     * answers a background request under it with silence rather than an error.
+     * Every payment would then simply arrive without a place, which looks
+     * exactly like a bug. Naming the reason on the item is the difference.
+     */
+    fun unavailableReason(): String? = when {
+        !isPermitted() -> "location permission is not granted"
+        !hasBackgroundPermission() -> "location access is not set to \"Allow all the time\""
+        else -> null
+    }
+
     /** Instant and free, but possibly hours old and somewhere else entirely. */
     fun lastKnown(): Fix? {
-        if (!isPermitted()) return null
+        if (unavailableReason() != null) return null
         val manager = manager() ?: return null
         return providers(manager)
             .mapNotNull { provider ->
@@ -62,7 +77,7 @@ class LocationCapture(private val context: Context) {
      * does, and outdoors the reverse gives a far better result.
      */
     suspend fun fresh(timeoutMs: Long): Fix? {
-        if (!isPermitted()) return null
+        if (unavailableReason() != null) return null
         val manager = manager() ?: return null
         val providers = providers(manager)
         if (providers.isEmpty()) return null

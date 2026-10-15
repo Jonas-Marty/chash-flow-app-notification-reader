@@ -158,7 +158,12 @@ class CaptureProcessor(
         // said this payment carries no location at all, in which case the fix
         // is never read in the first place.
         val attachLocation = extraction.attachLocation
-        val fix = if (config.captureLocation && attachLocation) locationCapture.lastKnown() else null
+        val wantsLocation = config.captureLocation && attachLocation
+        // A grant of "while using the app" leaves this switched on and reading
+        // nothing, because both readers are background. Say so on the item now
+        // rather than letting every payment arrive placeless and unexplained.
+        val unavailable = if (wantsLocation) locationCapture.unavailableReason() else null
+        val fix = if (wantsLocation && unavailable == null) locationCapture.lastKnown() else null
         val item = OutboxItem(
             capturedId = capturedId,
             ruleId = rule.id,
@@ -177,6 +182,7 @@ class CaptureProcessor(
             locationAccuracyM = fix?.accuracyM,
             locationAt = fix?.takenAt ?: 0,
             attachLocation = attachLocation,
+            locationNote = unavailable?.let { OutboxLocation.blockedNote(it) },
         )
         val outboxId = db.outbox().insert(item)
         db.captured().updateOutcome(capturedId, MatchState.MATCHED, rule.id, outboxId, null)

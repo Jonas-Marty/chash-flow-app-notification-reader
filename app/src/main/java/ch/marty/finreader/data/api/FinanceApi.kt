@@ -25,7 +25,12 @@ sealed interface ApiResult<out T> {
     data class NetworkError(val message: String) : ApiResult<Nothing>
 }
 
-data class PostOutcome(val remoteId: String?, val deduplicated: Boolean)
+data class PostOutcome(
+    val remoteId: String?,
+    val deduplicated: Boolean,
+    /** True when this POST replaced the location the server already held. */
+    val locationUpdated: Boolean = false,
+)
 
 /** What the web app did with a bill proposal. */
 sealed interface ProposalOutcome {
@@ -244,7 +249,7 @@ class FinanceApi(private val settings: SettingsStore) {
                 .build()
             execute(request) { body ->
                 val parsed = json.decodeFromString<PendingTransactionResponse>(body)
-                PostOutcome(parsed.pendingTransaction?.id, parsed.deduplicated)
+                PostOutcome(parsed.pendingTransaction?.id, parsed.deduplicated, parsed.locationUpdated)
             }
         }
 

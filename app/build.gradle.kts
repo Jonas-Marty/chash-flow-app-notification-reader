@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.androidx.room)
 }
 
 /**
@@ -122,8 +123,15 @@ android {
     }
 }
 
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
+/**
+ * Room's own plugin rather than a bare `room.schemaLocation` KSP argument.
+ * As a plain argument the exported schema is not a declared task output, so
+ * the debug and release KSP tasks write the same file at the same time and a
+ * schema bump lands as a half-written JSON that fails the next build. The
+ * plugin declares the directory properly and the variants take turns.
+ */
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 dependencies {

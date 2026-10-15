@@ -64,6 +64,8 @@ data class PendingTransactionPayload(
 data class PendingTransactionResponse(
     @SerialName("pending_transaction") val pendingTransaction: PendingTransactionDto? = null,
     val deduplicated: Boolean = false,
+    /** Set on a repeat POST whose location replaced the stored one. */
+    @SerialName("location_updated") val locationUpdated: Boolean = false,
     val error: String? = null,
 )
 
