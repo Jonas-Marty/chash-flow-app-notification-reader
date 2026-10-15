@@ -116,14 +116,21 @@ echo "    sha256 $DIGEST"
 
 if [ "$notify" = true ]; then
     if [ -r "$GOTIFY_TOKEN_FILE" ]; then
-        python3 - "$GOTIFY_URL" "$(cat "$GOTIFY_TOKEN_FILE")" "$VERSION_NAME" "$VERSION_CODE" "$BASE_URL/$NAME" "$SIZE" <<'PY' || echo "warning: notification failed" >&2
+        python3 - "$GOTIFY_URL" "$(cat "$GOTIFY_TOKEN_FILE")" "$VERSION_NAME" "$VERSION_CODE" "$BASE_URL/$NAME" "$SIZE" "$BASE_URL/" <<'PY' || echo "warning: notification failed" >&2
 import json, sys, urllib.request
-url, token, name, code, link, size = sys.argv[1:7]
+url, token, name, code, link, size, index = sys.argv[1:8]
+# The click URL only makes the phone notification itself tappable; it is gone
+# once that is swiped away, and the Gotify app and web UI never show it. So
+# the link is in the text as well, rendered as Markdown.
 body = json.dumps({
     "title": f"FinReader {name} ({code})",
-    "message": f"{size} — tap to download, then tap the file to install.",
+    "message": f"[Download {link.rsplit('/', 1)[-1]}]({link}) — {size}\n\n"
+               f"Tap the file to install. Older builds: {index}",
     "priority": 5,
-    "extras": {"client::notification": {"click": {"url": link}}},
+    "extras": {
+        "client::display": {"contentType": "text/markdown"},
+        "client::notification": {"click": {"url": link}},
+    },
 }).encode()
 req = urllib.request.Request(
     f"{url}/message", data=body,
