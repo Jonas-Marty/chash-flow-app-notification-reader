@@ -106,6 +106,12 @@ enum class TxTypeMode {
 
     /** expense unless [Rule.incomePattern] matches the notification. */
     FROM_PATTERN,
+
+    /**
+     * Money moved between two of my own accounts, e.g. a cash withdrawal into
+     * the wallet. Goes to [Rule.destinationAccountId]; no category.
+     */
+    TRANSFER,
 }
 
 @Serializable
@@ -142,6 +148,12 @@ data class Rule(
     val sourceAccountId: String,
     val sourceAccountName: String? = null,
     val sourceAccountCurrency: String? = null,
+    /**
+     * With [TxTypeMode.TRANSFER]: uuid of the account the money goes to. Left
+     * empty, the destination is picked on `/pending` when confirming.
+     */
+    val destinationAccountId: String? = null,
+    val destinationAccountName: String? = null,
     val categoryId: String? = null,
     val categoryName: String? = null,
     /** Badge shown next to the pending transaction in the web app, e.g. "twint". */

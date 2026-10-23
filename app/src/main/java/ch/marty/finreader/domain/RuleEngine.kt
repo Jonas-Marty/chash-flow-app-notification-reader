@@ -117,6 +117,7 @@ object RuleEngine {
                     ?: return MatchOutcome.Failed(rule, "Income pattern missing or invalid")
                 if (regex.containsMatchIn(haystack)) "income" else "expense"
             }
+            TxTypeMode.TRANSFER -> "transfer"
         }
 
         // A bill arrives wherever the phone is, which says nothing about the

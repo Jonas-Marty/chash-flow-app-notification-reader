@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.data.db.RuleTarget
+import ch.marty.finreader.data.db.TxTypeMode
 import ch.marty.finreader.ui.MainViewModel
 
 @Composable
@@ -82,7 +83,13 @@ fun RulesScreen(viewModel: MainViewModel, onEdit: (String) -> Unit, onCreate: ()
                                     (if (rule.autoPost) "" else " · manual")
                             } else {
                                 "→ ${rule.sourceAccountName ?: rule.sourceAccountId}" +
-                                    (rule.categoryName?.let { " · $it" } ?: "") +
+                                    (
+                                        if (rule.txTypeMode == TxTypeMode.TRANSFER) {
+                                            " ⇄ ${rule.destinationAccountName ?: "account picked on /pending"}"
+                                        } else {
+                                            rule.categoryName?.let { " · $it" } ?: ""
+                                        }
+                                    ) +
                                     (if (rule.autoPost) "" else " · manual") +
                                     when (rule.locationMode) {
                                         LocationMode.ATTACH -> ""

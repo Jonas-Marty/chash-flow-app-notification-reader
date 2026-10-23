@@ -80,6 +80,11 @@ that rule's next entry, marked in cash-flow as provided by FinReader — you sti
 post it there. A bill whose entry was already posted is refused; the card then
 offers *Open entry to edit* so you can correct the amount by hand.
 
+**Transfers** — money moved between your own accounts, like a cash withdrawal
+into the wallet — are a rule *Direction* too: *Transfer to another account*, with
+the account it goes to. Leave that empty and you pick it on `/pending` when
+confirming. A transfer carries no category.
+
 *Run rules again* works on an already-posted transaction as well: the pending
 entry is deleted in cash-flow and recreated if a rule still matches. One you
 have already accepted is off limits — undo it in cash-flow first.

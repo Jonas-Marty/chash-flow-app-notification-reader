@@ -79,14 +79,15 @@ object RulePrompt {
         appendLine()
 
         appendLine("## What a rule can create")
-        appendLine("- `pending_transaction`: a transaction I confirm later. Fill `direction` (expense, income, or")
-        appendLine("  from_pattern with `income_pattern` deciding income), the templates, `location`, `category` and")
-        appendLine("  `external_source` (a short lowercase badge naming the source, e.g. \"twint\").")
+        appendLine("- `pending_transaction`: a transaction I confirm later. Fill `direction` (expense, income,")
+        appendLine("  from_pattern with `income_pattern` deciding income, or transfer for money moved between my own")
+        appendLine("  accounts such as a cash withdrawal — a transfer has no category), the templates, `location`,")
+        appendLine("  `category` and `external_source` (a short lowercase badge naming the source, e.g. \"twint\").")
         appendLine("  `location` is attach, never (online payments, subscriptions — the phone is not where the money")
         appendLine("  was spent) or unless_pattern with `location_exclude_pattern`.")
         appendLine("- `recurring_bill`: the amount fills in the next entry of a recurring bill (rent, phone, credit")
         appendLine("  card statement). Only the amount and the date are used; skip the booking fields.")
-        appendLine("I pick the account and the recurring entry myself in the app — don't include them.")
+        appendLine("I pick the accounts and the recurring entry myself in the app — don't include them.")
         appendLine()
 
         if (request.categoryNames.isNotEmpty()) {

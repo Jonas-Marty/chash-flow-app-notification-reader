@@ -47,6 +47,8 @@ data class PendingTransactionPayload(
     val amount: String,
     val type: String,
     @SerialName("occurred_on") val occurredOn: String,
+    /** Only with type "transfer"; the server drops it otherwise. */
+    @SerialName("destination_account_id") val destinationAccountId: String? = null,
     @SerialName("category_id") val categoryId: String? = null,
     val description: String? = null,
     val note: String? = null,

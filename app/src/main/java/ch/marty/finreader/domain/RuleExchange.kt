@@ -215,8 +215,11 @@ object RuleExchange {
         // What the reply could not have known.
         if (rule.target == RuleTarget.RECURRING_BILL) {
             if (rule.recurringRuleId.isNullOrBlank()) warnings += "Pick the recurring rule the bill is for."
-        } else if (rule.sourceAccountId.isBlank()) {
-            warnings += "Pick the account."
+        } else {
+            if (rule.sourceAccountId.isBlank()) warnings += "Pick the account."
+            if (rule.txTypeMode == TxTypeMode.TRANSFER && rule.destinationAccountId.isNullOrBlank()) {
+                warnings += "Pick the account the transfer goes to, or leave it to /pending."
+            }
         }
         warnings += checkPatterns(rule)
 

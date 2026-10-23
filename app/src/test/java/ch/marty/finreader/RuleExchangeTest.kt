@@ -4,6 +4,7 @@ import ch.marty.finreader.data.db.CategoryCache
 import ch.marty.finreader.data.db.LocationMode
 import ch.marty.finreader.data.db.Rule
 import ch.marty.finreader.data.db.RuleTarget
+import ch.marty.finreader.data.db.TxTypeMode
 import ch.marty.finreader.domain.MatchOutcome
 import ch.marty.finreader.domain.NotificationInput
 import ch.marty.finreader.domain.RuleEngine
@@ -188,5 +189,37 @@ class RuleExchangeTest {
         // The example answer in the prompt must itself be importable.
         val example = prompt.substringAfterLast("## Answer")
         assertTrue(RuleExchange.parse(example) is RuleExchange.ParseResult.Ok)
+    }
+
+    @Test
+    fun `a cash withdrawal imports as a transfer that still needs its destination`() {
+        val spec = (RuleExchange.parse(
+            """
+            {"finreader_rule": 1, "rules": [{
+              "name": "debiX+ cash withdrawal",
+              "target": "pending_transaction",
+              "text_pattern": "(?<amount>\\d[\\d'’.,]*\\d)\\s*(?<currency>CHF|EUR)\\s*,[^,\\n]*,\\s*(?<merchant>[^,\\n]+?)\\s+\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}",
+              "title_pattern": "Cash withdrawal",
+              "direction": "transfer",
+              "category": null,
+              "external_source": "debix"
+            }]}
+            """.trimIndent(),
+        ) as RuleExchange.ParseResult.Ok).rules.single()
+        val imported = RuleExchange.apply(spec, base, categories)
+
+        assertEquals(TxTypeMode.TRANSFER, imported.rule.txTypeMode)
+        assertTrue(imported.warnings.any { "transfer goes to" in it })
+
+        val outcome = RuleEngine.apply(
+            imported.rule.copy(destinationAccountId = "acc-cash"),
+            NotificationInput(
+                "com.sixgroup.debixplus", "debiX+", "Cash withdrawal",
+                "100.00 CHF, VISA Debit ****7880, Raiffeisen 22.10.2026 22:11:18", 1_790_000_000_000,
+            ),
+        ) as MatchOutcome.Matched
+        assertEquals("transfer", outcome.extraction.type)
+        assertEquals(10000L, outcome.extraction.amountCents)
+        assertEquals("Raiffeisen", outcome.extraction.merchant)
     }
 }

@@ -254,13 +254,16 @@ private fun RuleEditorContent(
                 )
             }
 
-            LabeledDropdown(
-                label = "Category (optional)",
-                options = listOf<CategoryCache?>(null) + categories,
-                selected = categories.firstOrNull { it.id == current.categoryId },
-                optionLabel = { it?.let { c -> c.groupName?.let { g -> "$g · ${c.name}" } ?: c.name } ?: "— none —" },
-                onSelect = { onChange(current.copy(categoryId = it?.id, categoryName = it?.name)) },
-            )
+            // A transfer has no category in cash-flow.
+            if (current.txTypeMode != TxTypeMode.TRANSFER) {
+                LabeledDropdown(
+                    label = "Category (optional)",
+                    options = listOf<CategoryCache?>(null) + categories,
+                    selected = categories.firstOrNull { it.id == current.categoryId },
+                    optionLabel = { it?.let { c -> c.groupName?.let { g -> "$g · ${c.name}" } ?: c.name } ?: "— none —" },
+                    onSelect = { onChange(current.copy(categoryId = it?.id, categoryName = it?.name)) },
+                )
+            }
         }
 
         HorizontalDivider()
@@ -342,7 +345,7 @@ private fun RuleEditorContent(
 
         // A bill only proposes an amount and a date; direction, texts and
         // location all come from the recurring rule in the web app.
-        if (!isBill) BookingFields(current, onChange)
+        if (!isBill) BookingFields(current, accounts, onChange)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -385,7 +388,11 @@ private fun RuleEditorContent(
             if (isBill) {
                 BillPreview(outcome, recurringRules.firstOrNull { it.id == current.recurringRuleId }, current)
             } else {
-                PreviewResult(outcome, accounts.firstOrNull { it.id == current.sourceAccountId })
+                PreviewResult(
+                    outcome,
+                    accounts.firstOrNull { it.id == current.sourceAccountId },
+                    accounts.firstOrNull { it.id == current.destinationAccountId },
+                )
             }
             SampleOverview(current, samples, expectations, onPick = { sampleIndex = it })
         }
@@ -394,7 +401,7 @@ private fun RuleEditorContent(
 
 /** What a pending transaction is booked as; irrelevant to a bill. */
 @Composable
-private fun BookingFields(current: Rule, onChange: (Rule) -> Unit) {
+private fun BookingFields(current: Rule, accounts: List<AccountCache>, onChange: (Rule) -> Unit) {
     LabeledDropdown(
         label = "Direction",
         options = TxTypeMode.entries,
@@ -404,10 +411,28 @@ private fun BookingFields(current: Rule, onChange: (Rule) -> Unit) {
                 TxTypeMode.EXPENSE -> "Always expense"
                 TxTypeMode.INCOME -> "Always income"
                 TxTypeMode.FROM_PATTERN -> "Income when a pattern matches"
+                TxTypeMode.TRANSFER -> "Transfer to another account"
             }
         },
         onSelect = { onChange(current.copy(txTypeMode = it)) },
     )
+
+    if (current.txTypeMode == TxTypeMode.TRANSFER) {
+        val targets = accounts.filter { it.id != current.sourceAccountId }
+        LabeledDropdown(
+            label = "To account",
+            options = listOf<AccountCache?>(null) + targets,
+            selected = targets.firstOrNull { it.id == current.destinationAccountId },
+            optionLabel = { it?.let { a -> accountLabel(a) } ?: "— pick on /pending —" },
+            onSelect = { onChange(current.copy(destinationAccountId = it?.id, destinationAccountName = it?.name)) },
+        )
+        Text(
+            "Where the money goes, e.g. the cash wallet for a withdrawal. Left empty, " +
+                "you pick it in cash-flow when confirming.",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+    }
 
     if (current.txTypeMode == TxTypeMode.FROM_PATTERN) {
         Field(
@@ -539,7 +564,7 @@ private fun BillPreview(outcome: MatchOutcome?, target: RecurringRuleCache?, rul
                     )
                 }
 
-                else -> PreviewResult(outcome, null)
+                else -> PreviewResult(outcome, null, null)
             }
         }
     }
@@ -551,7 +576,7 @@ private fun shortDate(isoDate: String): String {
 }
 
 @Composable
-private fun PreviewResult(outcome: MatchOutcome?, account: AccountCache?) {
+private fun PreviewResult(outcome: MatchOutcome?, account: AccountCache?, destination: AccountCache?) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             when (outcome) {
@@ -580,6 +605,9 @@ private fun PreviewResult(outcome: MatchOutcome?, account: AccountCache?) {
                             appendLine("description: ${e.description ?: "—"}")
                             e.note?.let { appendLine("note:        $it") }
                             appendLine("account:     ${account?.let { accountLabel(it) } ?: "—"}")
+                            if (e.type == "transfer") {
+                                appendLine("to account:  ${destination?.let { accountLabel(it) } ?: "— picked on /pending"}")
+                            }
                             append("location:    ${if (e.attachLocation) "attached" else "not sent"}")
                         },
                         style = MaterialTheme.typography.bodySmall,

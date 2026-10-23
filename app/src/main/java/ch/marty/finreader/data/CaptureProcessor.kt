@@ -121,6 +121,7 @@ class CaptureProcessor(
 
         val externalRef = ExternalRef.withSequence(base, siblings.size)
         val isBill = rule.target == RuleTarget.RECURRING_BILL
+        val isTransfer = extraction.type == "transfer"
         val payloadJson = if (isBill) {
             // Only the amount and the date travel: the recurring rule in the web
             // app already knows the account, category and description.
@@ -141,7 +142,9 @@ class CaptureProcessor(
                     amount = AmountParser.centsToPlainString(extraction.amountCents),
                     type = extraction.type,
                     occurredOn = extraction.occurredOn,
-                    categoryId = rule.categoryId,
+                    destinationAccountId = if (isTransfer) rule.destinationAccountId?.takeIf { it.isNotBlank() } else null,
+                    // A transfer has no category; the server would drop it anyway.
+                    categoryId = if (isTransfer) null else rule.categoryId,
                     description = extraction.description,
                     note = buildNote(extraction.note, extraction.currency, rule.sourceAccountCurrency),
                     externalSource = rule.externalSource.take(120),
